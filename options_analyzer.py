@@ -2,7 +2,6 @@ import os
 import json
 import gspread
 import pandas as pd
-import yfinance as yf # yfinance might not be needed in this script if only doing ingestion
 import numpy as np
 from datetime import datetime, timedelta, timezone # Added timezone
 # import psycopg2 # Not directly used if using SQLAlchemy engine
