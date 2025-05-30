@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials # For gspread authenticati
 
 # --- Configuration from Environment Variables ---
 DB_HOST = os.environ.get("NEON_DB_HOST")
-DB_PORT = os.environ.get("NEON_DB_PORT")
+DB_PORT = 5432
 DB_NAME = os.environ.get("NEON_DB_NAME")
 DB_USER = os.environ.get("NEON_DB_USER")
 DB_PASSWORD = os.environ.get("NEON_DB_PASSWORD")
