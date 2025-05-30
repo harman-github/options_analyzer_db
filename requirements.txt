@@ -3,7 +3,6 @@ SQLAlchemy
 psycopg2-binary
 gspread
 google-auth
-json
 numpy
 datetime
 google.oauth2.service_account
