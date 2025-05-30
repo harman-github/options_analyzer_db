@@ -1,0 +1,36 @@
+name: Daily Options Data Ingestion
+
+on:
+  schedule:
+    # Runs at 11:00 UTC every day (adjust as needed, e.g., after market close in your timezone)
+    # Use crontab.guru to help with cron syntax
+    - cron: '0 11 * * *' 
+  workflow_dispatch: # Allows manual triggering from the Actions tab on GitHub
+
+jobs:
+  ingest-data-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4 # Or v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4 # Or v3
+        with:
+          python-version: '3.10' # Or your preferred Python version
+
+      - name: Install Python Dependencies
+        run: pip install -r requirements.txt # Assumes requirements.txt is for options_analyzer.py
+
+      - name: Run Data Ingestion Script
+        env:
+          GSHEET_CREDENTIALS_JSON: ${{ secrets.GSHEET_CREDENTIALS_JSON }}
+          NEON_DB_HOST: ${{ secrets.NEON_DB_HOST }}
+          NEON_DB_PORT: ${{ secrets.NEON_DB_PORT }}
+          NEON_DB_NAME: ${{ secrets.NEON_DB_NAME }}
+          NEON_DB_USER: ${{ secrets.NEON_DB_USER }}
+          NEON_DB_PASSWORD: ${{ secrets.NEON_DB_PASSWORD }}
+          GSHEET_SPREADSHEET_NAME: ${{ secrets.GSHEET_SPREADSHEET_NAME }}
+          # Set PYTHONUNBUFFERED to see print statements in GitHub Actions logs immediately
+          PYTHONUNBUFFERED: "1" 
+        run: python options_analyzer.py # Ensure this is the correct path to your script
