@@ -12,6 +12,7 @@ env/
 
 # Google Cloud credentials file
 credentials.json
+new_credentials.json
 *.json
 
 # Local database files (if you used SQLite for testing)
