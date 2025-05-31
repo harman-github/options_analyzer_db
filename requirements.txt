@@ -1,7 +1,11 @@
+streamlit
 pandas
-SQLAlchemy
+sqlalchemy
 psycopg2-binary
+yfinance
+plotly
+numpy
 gspread
 google-auth
-numpy
-datetime
+google-auth-oauthlib
+google-auth-httplib2
