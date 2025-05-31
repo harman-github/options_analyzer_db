@@ -1,28 +1,29 @@
 # pages/02_Ticker_Trends.py
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text # Ensure 'text' is imported if used
+from sqlalchemy import text # Ensure 'text' is imported if used
 from datetime import datetime, timedelta
 import yfinance as yf
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 
-DB_HOST = "localhost"
-DB_PORT = "5432"
-DB_NAME = "options_analyzer_db"
-DB_USER = "options_app_user"
-DB_PASSWORD = "Morpheus321"  # <<< MAKE SURE THIS IS YOUR CORRECT PASSWORD
-db_connection_string = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# DB_HOST = "localhost"
+# DB_PORT = "5432"
+# DB_NAME = "options_analyzer_db"
+# DB_USER = "options_app_user"
+# DB_PASSWORD = "Morpheus321"  # <<< MAKE SURE THIS IS YOUR CORRECT PASSWORD
+# db_connection_string = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 @st.cache_data(ttl=3600)
 def get_all_unique_tickers_from_db():
     """Fetches all unique underlying tickers from the database."""
     try:
         # Now db_connection_string is defined in this script's scope
-        engine = create_engine(db_connection_string) 
+        # engine = create_engine(db_connection_string)
+        conn = st.connection("postgresql", type="sql")
         query = "SELECT DISTINCT underlying_ticker FROM options_activity ORDER BY underlying_ticker;"
-        df = pd.read_sql_query(query, engine)
+        df = conn.query(query, ttl=0)
         return df['underlying_ticker'].tolist()
     except Exception as e:
         st.error(f"Error fetching unique tickers: {e}")
@@ -32,9 +33,10 @@ def get_all_unique_tickers_from_db():
 def get_all_unique_tickers_from_db():
     """Fetches all unique underlying tickers from the database."""
     try:
-        engine = create_engine(db_connection_string)
+        # engine = create_engine(db_connection_string)
+        conn = st.connection("postgresql", type="sql")
         query = "SELECT DISTINCT underlying_ticker FROM options_activity ORDER BY underlying_ticker;"
-        df = pd.read_sql_query(query, engine)
+        df = conn.query(query, ttl=0)
         return df['underlying_ticker'].tolist()
     except Exception as e:
         st.error(f"Error fetching unique tickers: {e}")
@@ -44,25 +46,26 @@ def get_all_unique_tickers_from_db():
 def fetch_activity_for_specific_ticker(ticker_symbol, start_date=None, end_date=None):
     """Fetches all activity for a specific ticker, optionally within a date range."""
     try:
-        engine = create_engine(db_connection_string)
+        # engine = create_engine(db_connection_string)
+        conn = st.connection("postgresql", type="sql")
         params = {'ticker': ticker_symbol}
         date_conditions = []
         if start_date:
             params['start_date'] = start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(start_date)
-            date_conditions.append("data_date >= %(start_date)s")
+            date_conditions.append("data_date >= :start_date")
         if end_date:
             params['end_date'] = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
-            date_conditions.append("data_date <= %(end_date)s")
+            date_conditions.append("data_date <= :end_date")
         
         date_filter_sql = " AND ".join(date_conditions) if date_conditions else ""
 
         query = f"""
         SELECT * FROM options_activity 
-        WHERE underlying_ticker = %(ticker)s
+        WHERE underlying_ticker = :ticker
         { "AND " + date_filter_sql if date_filter_sql else ""}
         ORDER BY data_date;
         """
-        df = pd.read_sql_query(query, engine, params=params)
+        df = conn.query(query, params=params, ttl=0)
         if not df.empty:
             df['data_date'] = pd.to_datetime(df['data_date'])
             df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce')
