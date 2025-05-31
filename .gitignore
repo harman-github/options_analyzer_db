@@ -11,7 +11,8 @@ env/
 .streamlit/secrets.toml
 
 # Google Cloud credentials file
-credentials.json 
+credentials.json
+*.json
 
 # Local database files (if you used SQLite for testing)
 *.db
