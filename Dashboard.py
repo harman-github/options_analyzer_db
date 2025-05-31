@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text # Added text import
+from sqlalchemy import text # Added text import
 from datetime import datetime, timedelta
 import yfinance as yf
 import numpy as np
@@ -9,13 +9,13 @@ import matplotlib
 
 
 # --- DATABASE CONNECTION DETAILS ---
-DB_HOST = "localhost"
-DB_PORT = "5432"
-DB_NAME = "options_analyzer_db"
-DB_USER = "options_app_user"
-DB_PASSWORD = "Morpheus321"
+# DB_HOST = "localhost"
+# DB_PORT = "5432"
+# DB_NAME = "options_analyzer_db"
+# DB_USER = "options_app_user"
+# DB_PASSWORD = "Morpheus321"
 
-db_connection_string = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+# db_connection_string = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- Helper Functions ---
 market_cap_cache = {}
@@ -53,12 +53,17 @@ def get_current_price(ticker_symbol):
 def get_db_date_range():
     min_db_date, max_db_date = None, None
     try:
-        engine = create_engine(db_connection_string)
-        with engine.connect() as connection:
-            min_date_val = connection.execute(text("SELECT MIN(data_date) FROM options_activity")).scalar_one_or_none()
-            if min_date_val: min_db_date = pd.to_datetime(min_date_val).date()
-            max_date_val = connection.execute(text("SELECT MAX(data_date) FROM options_activity")).scalar_one_or_none()
-            if max_date_val: max_db_date = pd.to_datetime(max_date_val).date()
+        # engine = create_engine(db_connection_string)
+        conn = st.connection("postgresql", type="sql") 
+        min_max_df = conn.query("SELECT MIN(data_date) as min_val, MAX(data_date) as max_val FROM options_activity;", ttl=0) # ttl=0 for query if outer func is cached
+
+        if not min_max_df.empty:
+            min_val = min_max_df['min_val'].iloc[0]
+            max_val = min_max_df['max_val'].iloc[0]
+            if pd.notna(min_val): 
+                min_db_date = pd.to_datetime(min_val).date()
+            if pd.notna(max_val): 
+                max_db_date = pd.to_datetime(max_val).date()
         return min_db_date, max_db_date
     except Exception as e:
         print(f"Error fetching date range from DB: {e}")
@@ -69,9 +74,14 @@ def fetch_options_activity_for_range(start_date, end_date):
     start_date_str = start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else str(start_date)
     end_date_str = end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else str(end_date)
     try:
-        engine = create_engine(db_connection_string)
-        query = """SELECT * FROM options_activity WHERE data_date >= %(start_date)s AND data_date <= %(end_date)s ORDER BY data_date, underlying_ticker;"""
-        df = pd.read_sql_query(query, engine, params={'start_date': start_date_str, 'end_date': end_date_str})
+        # engine = create_engine(db_connection_string)
+        conn = st.connection("postgresql", type="sql")
+        query = """
+        SELECT * FROM options_activity 
+        WHERE data_date >= :start_date AND data_date <= :end_date 
+        ORDER BY data_date, underlying_ticker;
+        """
+        df = conn.query(query, params={'start_date': start_date_str, 'end_date': end_date_str}, ttl =0)
         if not df.empty:
             df['expiration_date'] = pd.to_datetime(df['expiration_date'], errors='coerce')
             df['data_date'] = pd.to_datetime(df['data_date'], errors='coerce')
