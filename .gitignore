@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+ENV/
+env/
+.env
+
+# Streamlit secrets (local copy)
+.streamlit/secrets.toml
+
+# Google Cloud credentials file
+credentials.json 
+
+# Local database files (if you used SQLite for testing)
+*.db
+*.sqlite3
