@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import numpy as np
 import plotly.express as px
+import matplotlib
 
 
 # --- DATABASE CONNECTION DETAILS ---
