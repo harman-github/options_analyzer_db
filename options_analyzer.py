@@ -278,7 +278,7 @@ def main_automated_ingestion():
     # For now, let's process any date in GSheet. The delete_data_for_date will handle idempotency.
     # A more advanced logic could be: dates_to_process = [d for d in gsheet_tab_dates_to_check if d not in dates_in_db]
     # But if a sheet is updated, you'd want to re-process it. So, processing all found GSheet tabs is safer with delete-first.
-    dates_to_process = sorted(gsheet_tab_dates_to_check, reverse=True) # Process recent dates first if desired
+    dates_to_process = sorted([d for d in gsheet_tab_dates_to_check if d not in dates_in_db], reverse=True)
     
     if not dates_to_process:
         print("No new dates found in Google Sheets to process.")
