@@ -262,18 +262,28 @@ def main_automated_ingestion():
     # ... (your existing code to get dates_in_db) ...
     try:
         with db_engine.connect() as connection:
+            # Ensure you have: from sqlalchemy import text as sql_text
             result = connection.execute(sql_text("SELECT DISTINCT data_date FROM options_activity;"))
             dates_in_db_raw = [row[0] for row in result]
-            dates_in_db = set()
+            dates_in_db = set() # Initialize an empty set
+
             for d_raw in dates_in_db_raw:
-                if isinstance(d_raw, (datetime, pd.Timestamp, pd.Timestamp.date_type)): # Handle date, datetime, Timestamp
-                    dates_in_db.add(pd.to_datetime(d_raw).strftime('%Y-%m-%d'))
-                elif isinstance(d_raw, str) and is_valid_date_format(d_raw):
-                    dates_in_db.add(d_raw)
-        print(f"Found {len(dates_in_db)} distinct dates in DB: {sorted(list(dates_in_db))[:10]}...")
+                if d_raw is not None: # Important: Ensure the value from DB isn't NULL
+                    try:
+                        # pd.to_datetime can handle datetime.date, datetime.datetime, pd.Timestamp,
+                        # and even well-formatted date strings (though DB should return date/time objects).
+                        date_str = pd.to_datetime(d_raw).strftime('%Y-%m-%d')
+                        dates_in_db.add(date_str)
+                    except Exception as e:
+                        # This might happen if d_raw is an unexpected type or unparseable
+                        print(f"Warning: Could not convert database date value '{repr(d_raw)}' to YYYY-MM-DD string: {e}")
+            
+        print(f"Found {len(dates_in_db)} distinct dates in the database: {sorted(list(dates_in_db))[:10]}...") # Print first 10
     except Exception as e:
-        print(f"Error fetching distinct dates from DB: {e}")
-        return
+        print(f"Error fetching distinct dates from database: {e}")
+        # You might want to return or exit here if this step is critical and fails
+        print(f"options_analyzer.py script finished with error at {datetime.now(timezone.utc)}")
+        return # Stop further execution if DB dates can't be fetched
 
 
     # 3. Determine dates to process
