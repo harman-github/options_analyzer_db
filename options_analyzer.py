@@ -335,7 +335,7 @@ def main_automated_ingestion():
         print(f"DEBUG: Index of final_ingest_df: {final_ingest_df.index}") # Optional: check index
         print(f"Data types: \n{final_ingest_df.dtypes}")    
         if 'id' in final_ingest_df.columns:
-        print("WARNING: 'id' column IS PRESENT in final_ingest_df. This is likely the cause of the error.")    
+            print("WARNING: 'id' column IS PRESENT in final_ingest_df. This is likely the cause of the error.")    
         for col_to_num in ['strike_price', 'premium_usd']:
             if col_to_num in final_ingest_df.columns: final_ingest_df[col_to_num] = pd.to_numeric(final_ingest_df[col_to_num], errors='coerce')
 
