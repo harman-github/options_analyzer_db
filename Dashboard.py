@@ -411,9 +411,9 @@ else:
 
             # --- Apply Default Sort by "Bullish % MCap" ---
             # Ensure the sorting column is numeric before sorting
-            # df_for_display["Bullish % MCap"] = pd.to_numeric(df_for_display["Bullish % MCap"], errors='coerce')
-            # df_for_display.sort_values(by="Bullish % MCap", ascending=False, inplace=True)
-            # df_for_display.reset_index(drop=True, inplace=True)
+            df_for_display["Call % MCap"] = pd.to_numeric(df_for_display["Call % MCap"], errors='coerce')
+            df_for_display.sort_values(by="Call % MCap", ascending=False, inplace=True)
+            df_for_display.reset_index(drop=True, inplace=True)
 
 
             # --- Prepare for Styling ---
