@@ -22,6 +22,13 @@ GSHEET_CREDENTIALS_JSON_STR = os.environ.get("GSHEET_CREDENTIALS_JSON")
 db_engine = None
 
 # --- Helper Functions (parse_human_readable_number, clean_strike_price_string) ---
+def is_valid_date_format(date_string, date_format="%Y-%m-%d"):
+    """Checks if a string matches the specified date format."""
+    try:
+        datetime.strptime(date_string, date_format)
+        return True
+    except ValueError:
+        return False
 # Ensure these are defined as you had them:
 def parse_human_readable_number(value):
     if pd.isna(value): return np.nan
