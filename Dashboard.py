@@ -191,47 +191,66 @@ st.sidebar.header("Filters")
 min_overall_db_date, max_overall_db_date = get_db_date_range()
 today = datetime.now().date()
 
-# Determine the default single day for the initial dashboard view:
+# If no data at all, default to a reasonable past period (e.g., last year up to today).
+calendar_min_boundary = min_overall_db_date if min_overall_db_date else today - pd.Timedelta(days=365)
+calendar_max_boundary = today # Max selectable date is today
+
+# Ensure calendar_min_boundary is not after calendar_max_boundary
+if calendar_min_boundary > calendar_max_boundary:
+    calendar_min_boundary = calendar_max_boundary - pd.Timedelta(days=1) # Adjust if something is odd
+
+# Determine the default selected date for initial view (most recent data day or today)
 if max_overall_db_date:
-    # If there's data, default to the most recent day with data
-    default_view_date = max_overall_db_date
+    initial_default_date = max_overall_db_date
+    # Ensure default is not before the calendar's absolute minimum
+    if initial_default_date < calendar_min_boundary:
+        initial_default_date = calendar_min_boundary
+    # Ensure default is not after the calendar's absolute maximum
+    if initial_default_date > calendar_max_boundary:
+        initial_default_date = calendar_max_boundary
 else:
-    # If no data in DB, or error fetching range, default to today
-    default_view_date = today
+    # No data in DB, or error fetching range, default to today (or the max boundary)
+    initial_default_date = calendar_max_boundary
 
-# Determine the overall selectable range for the calendar pickers
-# Allow picking from the earliest data day (or 2 years back if no data) up to today
-calendar_min_date = min_overall_db_date if min_overall_db_date else today - pd.Timedelta(days=365*2)
-calendar_max_date = today # Users can select up to today
 
-# Ensure the default_view_date is within the calendar's selectable range
-# (This handles cases where DB might be very new or only has future-dated data, though unlikely for historical flow)
-if default_view_date < calendar_min_date:
-    default_view_date = calendar_min_date
-if default_view_date > calendar_max_date: # Should not happen if max_overall_db_date <= today
-    default_view_date = calendar_max_date
+# Set default values for the date pickers (both start and end to the same date initially)
+default_start_val = initial_default_date
+default_end_val = initial_default_date
+
+# Ensure default_start_val is not after default_end_val (shouldn't be if they are same)
+if default_start_val > default_end_val:
+    default_start_val = default_end_val
 
 
 selected_start_date = st.sidebar.date_input(
     "Start Date",
-    value=default_view_date,  # Default to the single most recent data day (or today)
-    min_value=calendar_min_date,
-    max_value=calendar_max_date, # Max selectable is today
-    key="main_dashboard_start_date" # Unique key
+    value=default_start_val,
+    min_value=calendar_min_boundary,
+    max_value=calendar_max_boundary, # Max selectable for start_date picker
+    key="main_dashboard_start_date"
 )
+
+# For the end date picker, its min_value must be the currently selected_start_date
+# and its value must be >= selected_start_date.
+# Also, its value must be <= calendar_max_boundary.
+final_default_end_val = default_end_val
+if final_default_end_val < selected_start_date: # Ensure default end is not before selected start
+    final_default_end_val = selected_start_date
+if final_default_end_val > calendar_max_boundary: # Ensure default end is not after calendar max
+    final_default_end_val = calendar_max_boundary
+
 
 selected_end_date = st.sidebar.date_input(
     "End Date",
-    value=default_view_date,  # Default to the single most recent data day (or today)
-    min_value=selected_start_date,  # Ensures end_date is not before start_date
-    max_value=calendar_max_date, # Max selectable is today
-    key="main_dashboard_end_date" # Unique key
+    value=final_default_end_val,
+    min_value=selected_start_date,  # Min for end_date is the chosen start_date
+    max_value=calendar_max_boundary, # Max selectable is overall calendar max
+    key="main_dashboard_end_date"
 )
 
 if selected_start_date > selected_end_date:
     st.sidebar.error("Error: Start date must be before or same as end date.")
-    # st.stop() # You might want to conditionally stop or just let user correct
-    # For now, we'll let the script proceed, and if data fetch is empty, it will show a warning.
+    st.stop()
 
 st.sidebar.markdown("---")
 searched_ticker = st.sidebar.text_input("Search Specific Ticker (e.g., NVDA):", key="main_ticker_search").strip().upper()
@@ -274,20 +293,31 @@ if searched_ticker:
 # Debug line from user's code - remove or keep as needed
 # st.dataframe(view_data.head()) 
 
-if view_data.empty:
-    st.warning("No options data to display based on current filters.")
+if view_data.empty: # This is the primary check
+    # Construct a helpful message
+    message_parts = ["No options data found"]
+    if searched_ticker:
+        message_parts.append(f"for ticker '{searched_ticker}'")
+    if selected_start_date == selected_end_date:
+        message_parts.append(f"for {selected_start_date.strftime('%Y-%m-%d')}.")
+    else:
+        message_parts.append(f"for the period {selected_start_date.strftime('%Y-%m-%d')} to {selected_end_date.strftime('%Y-%m-%d')}.")
+    message_parts.append("Please select a different date/range or check if data has been ingested for this period.")
+    st.warning(" ".join(message_parts))
 else:
     # --- Overall Activity Snapshot ---
-    snapshot_title = f"Overall Activity Snapshot{f' for {searched_ticker}' if searched_ticker else ' (Selected Period)'}"
-    with st.expander(snapshot_title, expanded=True): # Keep this expanded
-        total_premium = view_data['premium_usd'].sum()
-        num_tickers = view_data['underlying_ticker'].nunique()
-        num_trades = len(view_data)
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Premium", f"${total_premium:,.0f}")
-        col2.metric("Trades Count", f"{num_trades}")
-        col3.metric("Ticker(s) Active", f"{num_tickers if not searched_ticker else (searched_ticker if num_tickers > 0 else '0')}")
-
+    try:
+        snapshot_title = f"Overall Activity Snapshot{f' for {searched_ticker}' if searched_ticker else ' (Selected Period)'}"
+        with st.expander(snapshot_title, expanded=True):
+            total_premium = view_data['premium_usd'].sum()
+            num_tickers = view_data['underlying_ticker'].nunique()
+            num_trades = len(view_data)
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Total Premium", f"${total_premium:,.0f}")
+            col2.metric("Trades Count", f"{num_trades}")
+            col3.metric("Ticker(s) Active", f"{num_tickers if not searched_ticker else (searched_ticker if num_tickers > 0 else '0')}")
+     except Exception as e:
+        st.error(f"Error displaying Overall Activity Snapshot: {e}")
     # --- Distribution Charts ---
     # Check if data exists before attempting to plot these general distribution charts
     if not view_data.empty: 
