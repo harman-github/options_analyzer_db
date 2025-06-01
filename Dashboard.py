@@ -391,18 +391,15 @@ else:
 
             # Select and order columns for the final display
             ordered_cols = [
-                "Ticker", 
-                "Bullish % MCap",   
-                "Bearish % MCap",   
+                "Ticker",
                 "Market Cap",
                 "% of MCap",
+                "Call % MCap", "Put % MCap",
                 "Current Price", 
                 "Price at Period Start", 
                 "Price Change %",
-                "Total Premium", 
-                "Call Premium", "Put Premium", 
-                "Call % MCap", "Put % MCap", 
-                "Bullish Prem", "Bearish Prem"
+                "Call Premium", "Put Premium",
+                "Total Premium",
             ]
             # Ensure all expected columns exist in ticker_analysis_df, add if not (with NaN)
             for col in ordered_cols:
