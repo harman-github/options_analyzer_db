@@ -316,7 +316,7 @@ else:
             col1.metric("Total Premium", f"${total_premium:,.0f}")
             col2.metric("Trades Count", f"{num_trades}")
             col3.metric("Ticker(s) Active", f"{num_tickers if not searched_ticker else (searched_ticker if num_tickers > 0 else '0')}")
-     except Exception as e:
+    except Exception as e:
         st.error(f"Error displaying Overall Activity Snapshot: {e}")
     # --- Distribution Charts ---
     # Check if data exists before attempting to plot these general distribution charts
