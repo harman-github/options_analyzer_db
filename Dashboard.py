@@ -93,8 +93,20 @@ def fetch_options_activity_for_range(start_date, end_date):
 
 def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt):
     if options_df_for_period.empty:
+        st.info("analyze_ticker_dashboard received an empty DataFrame. No analysis to perform.") # UI feedback
         return pd.DataFrame()
 
+    # --- Add this DEBUG block ---
+    st.subheader("DEBUG: Input to analyze_ticker_dashboard") # Temporary for UI visibility
+    st.write("Data types of `options_df_for_period`:", options_df_for_period.dtypes)
+    st.write("First 5 rows of `options_df_for_period` (relevant columns):")
+    st.dataframe(options_df_for_period[['underlying_ticker', 'option_action', 'sentiment', 'premium_usd']].head())
+    if 'sentiment' in options_df_for_period.columns:
+        st.write("Unique sentiment values in input:", options_df_for_period['sentiment'].unique())
+        st.write("Counts of sentiment values in input:", options_df_for_period['sentiment'].value_counts(dropna=False))
+    else:
+        st.warning("DEBUG: 'sentiment' column is NOT in options_df_for_period!")
+    st.markdown("---")
     analysis_results = []
     unique_tickers = sorted(options_df_for_period['underlying_ticker'].unique())
 
