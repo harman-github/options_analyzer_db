@@ -220,15 +220,83 @@ def get_data_from_worksheet_automated(spreadsheet_object, worksheet_title_to_fet
     final_df = pd.concat(all_section_dfs, ignore_index=True)
     print(f"Finished parsing worksheet '{worksheet.title}'. Combined DataFrame has {len(final_df)} rows.")
     return final_df
+    
+def fetch_daily_data_from_tiingo(ticker_symbol, specific_date_obj, client):
+    """
+    Fetches EOD price and daily market cap for a ticker on a specific date from Tiingo.
+    Returns (price_on_date, market_cap_on_date)
+    """
+    price_on_date, market_cap_on_date = None, None
+    date_str = specific_date_obj.strftime('%Y-%m-%d')
+    print(f"Tiingo: Fetching EOD & daily fundamentals for {ticker_symbol} on {date_str}...")
+    try:
+        # Get EOD price
+        eod_prices = client.get_ticker_price(ticker_symbol, fmt='json', startDate=date_str, endDate=date_str)
+        if eod_prices and isinstance(eod_prices, list) and len(eod_prices) > 0:
+            price_on_date = eod_prices[0].get('adjClose', eod_prices[0].get('close'))
 
+        # Get daily fundamentals (includes marketCap for that day)
+        daily_fundamentals = client.get_fundamentals_daily(ticker_symbol, startDate=date_str, endDate=date_str, fmt='json')
+        if daily_fundamentals and isinstance(daily_fundamentals, list) and len(daily_fundamentals) > 0:
+            market_cap_on_date = daily_fundamentals[0].get('marketCap')
+            if market_cap_on_date is not None:
+                market_cap_on_date = int(market_cap_on_date)
+
+        print(f"Tiingo Result for {ticker_symbol} on {date_str}: Price={price_on_date}, MarketCap={market_cap_on_date}")
+        return price_on_date, market_cap_on_date
+    except Exception as e:
+        print(f"Tiingo: Error fetching daily data for {ticker_symbol} on {date_str}: {e}")
+        return None, None
+
+def get_and_update_general_market_cap(engine, ticker_symbol, client, force_refresh_days=7):
+    """
+    Gets market cap for a ticker for general "current" display purposes.
+    Uses DB cache with weekly refresh. Fetches latest available from Tiingo if needed.
+    """
+    db_mcap, last_updated = None, None
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(
+                sql_text("SELECT market_cap, last_updated FROM ticker_market_caps WHERE ticker = :ticker"),
+                {"ticker": ticker_symbol}
+            ).fetchone()
+            if result: db_mcap, last_updated = result
+    except Exception as e: print(f"DB Cache: Error reading market cap for {ticker_symbol}: {e}")
+
+    if db_mcap and last_updated and \
+       (datetime.now(timezone.utc).date() - pd.to_datetime(last_updated).date()) < timedelta(days=force_refresh_days):
+        print(f"DB Cache: Using general market cap for {ticker_symbol} (updated {last_updated.strftime('%Y-%m-%d')}).")
+        return int(db_mcap)
+
+    print(f"DB Cache: General market cap for {ticker_symbol} outdated or not found. Fetching latest from Tiingo.")
+    # Fetch a recent market cap from Tiingo (e.g., for yesterday, as daily fundamentals are EOD)
+    # For market cap, daily fundamental for a recent date is good.
+    recent_date_obj = datetime.now(timezone.utc).date() - timedelta(days=1) # Use yesterday's EOD fundamentals
+    _, latest_mcap = fetch_daily_data_from_tiingo(ticker_symbol, recent_date_obj, client) # Price not needed here
+
+    if latest_mcap is not None:
+        try:
+            with engine.connect() as connection:
+                connection.execute(sql_text("""
+                    INSERT INTO ticker_market_caps (ticker, market_cap, last_updated)
+                    VALUES (:ticker, :market_cap, :last_updated)
+                    ON CONFLICT (ticker) DO UPDATE SET
+                        market_cap = EXCLUDED.market_cap, last_updated = EXCLUDED.last_updated;
+                """), {"ticker": ticker_symbol, "market_cap": latest_mcap, "last_updated": datetime.now(timezone.utc)})
+                connection.commit()
+            print(f"DB Cache: Updated general market cap for {ticker_symbol} to {latest_mcap}.")
+            return int(latest_mcap)
+        except Exception as e: print(f"DB Cache: Error updating market cap for {ticker_symbol}: {e}")
+
+    return db_mcap # Return old one if new fetch failed, or None
 
 # --- Main Ingestion Logic for Automation ---
 def main_automated_ingestion():
-    global db_engine
+    global db_engine, tiingo_client
     print(f"options_analyzer.py script started at {datetime.now(timezone.utc)}")
     print("Starting automated data ingestion with new sync logic...")
 
-    if not all([DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, GSHEET_CREDENTIALS_JSON_STR, SPREADSHEET_NAME]):
+    if not all([DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, GSHEET_CREDENTIALS_JSON_STR, SPREADSHEET_NAME, TIINGO_API_KEY]):
         print("ERROR: Critical environment variables are missing. Exiting.")
         return
 
@@ -240,6 +308,12 @@ def main_automated_ingestion():
     except Exception as e:
         print(f"Failed to create SQLAlchemy engine or initial table: {e}")
         return
+    
+    try:
+        tiingo_config = {'api_key': TIINGO_API_KEY, 'session': True}
+        tiingo_client = TiingoClient(tiingo_config)
+        print("Tiingo client initialized.")
+    except Exception as e: print(f"Failed to initialize Tiingo client: {e}"); return
 
     # Authenticate gspread AND OPEN SPREADSHEET ONCE
     try:
@@ -274,7 +348,8 @@ def main_automated_ingestion():
         return
 
     # 2. Get distinct data_dates already in the PostgreSQL database (logic remains the same)
-    # ... (your existing code to get dates_in_db) ...
+    
+    dates_in_db = set()
     try:
         with db_engine.connect() as connection:
             # Ensure you have: from sqlalchemy import text as sql_text
@@ -337,7 +412,9 @@ def main_automated_ingestion():
             'data_date': 'data_date', 'UNDERLYING_TICKER': 'underlying_ticker',
             'STRIKE_PRICE': 'strike_price', 'EXPIRATION_DATE': 'expiration_date',
             'premium_usd_numeric': 'premium_usd', 'OPTION_ACTION': 'option_action',
-            'OPTION_TYPE': 'option_type', 'SENTIMENT': 'sentiment'
+            'OPTION_TYPE': 'option_type', 'SENTIMENT': 'sentiment',
+            'market_cap_ingested': 'market_cap_ingested', # New
+            'price_on_data_date': 'price_on_data_date'
         }
         final_ingest_df = pd.DataFrame()
         for df_col, db_col_name in db_columns_map.items():
