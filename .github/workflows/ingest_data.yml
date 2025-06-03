@@ -25,6 +25,7 @@ jobs:
       - name: Run Data Ingestion Script
         env:
           GSHEET_CREDENTIALS_JSON: ${{ secrets.GSHEET_CREDENTIALS_JSON }}
+          TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}
           NEON_DB_HOST: ${{ secrets.NEON_DB_HOST }}
           # NEON_DB_PORT: ${{ secrets.NEON_DB_PORT }}
           NEON_DB_NAME: ${{ secrets.NEON_DB_NAME }}
