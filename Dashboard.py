@@ -19,30 +19,44 @@ import matplotlib
 
 # --- Helper Functions ---
 market_cap_cache = {}
+@st.cache_data(ttl=3600) # Streamlit caching for an hour
 def get_market_cap_st(ticker_symbol):
-    if ticker_symbol in market_cap_cache:
-        return market_cap_cache[ticker_symbol]
-    print(f"DEBUG_MCAP: --- Attempting yfinance fetch for {ticker_symbol} ---")
+    if not ticker_symbol or pd.isna(ticker_symbol): # Handle invalid input
+        print(f"DEBUG_MCAP: Received invalid ticker symbol: {ticker_symbol}")
+        return None
+        
+    ticker_symbol_upper = str(ticker_symbol).upper() # Standardize ticker input
+
+    if ticker_symbol_upper in market_cap_cache: # Check manual cache
+        # print(f"DEBUG_MCAP: {ticker_symbol_upper} - Found in manual cache: {market_cap_cache[ticker_symbol_upper]}")
+        return market_cap_cache[ticker_symbol_upper]
+    
+    print(f"DEBUG_MCAP: --- Attempting yfinance fetch for {ticker_symbol_upper} ---")
     try:
-        ticker_obj = yf.Ticker(ticker_symbol)
-        info = ticker_obj.info
-        if not info: # Check if info dictionary is empty
-            print(f"DEBUG_MCAP: {ticker_symbol} - yfinance .info was empty or None.")
-            market_cap_cache[ticker_symbol] = None
+        ticker_obj = yf.Ticker(ticker_symbol_upper)
+        info = ticker_obj.info # This is the main API call here
+        
+        if not info: # Check if info dictionary is empty or None
+            print(f"DEBUG_MCAP: {ticker_symbol_upper} - yfinance .info was empty or None.")
+            market_cap_cache[ticker_symbol_upper] = None
             return None
-        market_cap = info.get('marketCap')
+
+        market_cap = info.get('marketCap') 
+        
         if market_cap is not None and market_cap > 0: # Ensure market_cap is a positive number
-            print(f"DEBUG_MCAP: {ticker_symbol} - Success! Market Cap: {market_cap}")
-            market_cap_cache[ticker_symbol] = market_cap
+            print(f"DEBUG_MCAP: {ticker_symbol_upper} - Success! Market Cap: {market_cap}")
+            market_cap_cache[ticker_symbol_upper] = market_cap
             return market_cap
         else:
-            print(f"DEBUG_MCAP: {ticker_symbol} - 'marketCap' key not found, is None, or zero in .info dict. Value: {market_cap}")
-            # print(f"DEBUG_MCAP: {ticker_symbol} - Available .info keys: {list(info.keys())}") # Optional: to see all keys
-            market_cap_cache[ticker_symbol] = None
+            quote_type = info.get('quoteType', 'N/A')
+            print(f"DEBUG_MCAP: {ticker_symbol_upper} - 'marketCap' key not found, is None, or zero in .info dict. Value: {market_cap}. QuoteType: {quote_type}")
+            # To see all available keys if 'marketCap' is missing:
+            # print(f"DEBUG_MCAP: {ticker_symbol_upper} - Available .info keys: {list(info.keys())}") 
+            market_cap_cache[ticker_symbol_upper] = None
             return None
     except Exception as e:
-        print(f"DEBUG_MCAP: {ticker_symbol} - ERROR during yfinance fetch: {e}")
-        market_cap_cache[ticker_symbol] = None
+        print(f"DEBUG_MCAP: {ticker_symbol_upper} - ERROR during yfinance fetch: {str(e)}")
+        market_cap_cache[ticker_symbol_upper] = None
         return None
 
 @st.cache_data(ttl=300)
