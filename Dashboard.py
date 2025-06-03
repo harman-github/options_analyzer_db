@@ -115,12 +115,15 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
             bullish_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['sentiment'] == 'Bullish']['premium_usd'].sum()
             bearish_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['sentiment'] == 'Bearish']['premium_usd'].sum()
         
-        mcap_val = market_cap if market_cap else 0
-        call_prem_vs_mcap = (total_call_premium / mcap_val) * 100 if mcap_val > 0 else 0
-        put_prem_vs_mcap = (total_put_premium / mcap_val) * 100 if mcap_val > 0 else 0
-        total_prem_vs_mcap = (total_premium_for_ticker / mcap_val) * 100 if mcap_val > 0 else 0
+        mcap_val_actual = market_cap if market_cap else 0
         
-        # Bullish % MCap and Bearish % MCap calculations are now REMOVED
+        # --- NEW: Calculate Premium per $1M of Market Cap ---
+        # Ratio = Premium / MarketCap
+        # Premium per $1M MCap = (Premium / MarketCap) * 1,000,000
+        
+        call_prem_per_mil_mcap = (total_call_premium / mcap_val_actual) * 1_000_000 if mcap_val_actual > 0 else 0
+        put_prem_per_mil_mcap = (total_put_premium / mcap_val_actual) * 1_000_000 if mcap_val_actual > 0 else 0
+        total_prem_per_mil_mcap = (total_premium_for_ticker / mcap_val_actual) * 1_000_000 if mcap_val_actual > 0 else 0
         
         price_at_period_start = None
         price_change_pct = np.nan
@@ -137,11 +140,17 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
         analysis_results.append({
             "Ticker": ticker, "Market Cap": market_cap, "Current Price": current_price,
             "Price at Period Start": price_at_period_start, "Price Change %": price_change_pct,
-            "Total Premium": total_premium_for_ticker, "% of MCap": total_prem_vs_mcap,
-            "Call Premium": total_call_premium, "Put Premium": total_put_premium,
-            "Call % MCap": call_prem_vs_mcap, "Put % MCap": put_prem_vs_mcap,
-            "Bullish Prem": bullish_premium, "Bearish Prem": bearish_premium
-            # "Bullish % MCap" and "Bearish % MCap" are REMOVED from here
+            
+            "Total Activity Prem": total_premium_for_ticker, # Absolute premium
+            "Call Vol. Prem": total_call_premium,           # Absolute premium
+            "Put Vol. Prem": total_put_premium,             # Absolute premium
+            "Bullish Prem": bullish_premium,                 # Absolute premium
+            "Bearish Prem": bearish_premium,                 # Absolute premium
+
+            # Renamed and recalculated MCap ratios
+            "Total P/$M MCap": total_prem_per_mil_mcap,
+            "Call P/$M MCap": call_prem_per_mil_mcap,
+            "Put P/$M MCap": put_prem_per_mil_mcap,
         })
     return pd.DataFrame(analysis_results)
 
@@ -385,92 +394,106 @@ else:
             if 'Price Change %' in df_to_display.columns:
                 format_dict['Price Change %'] = "{:.2f}%" # e.g., 5.20%
 
-            # Select and order columns for the final display
             ordered_cols = [
-                "Ticker",
-                "Market Cap",
-                "% of MCap",
-                "Call % MCap",
-                "Put % MCap",
+                "Ticker", 
+                "Call P/$M MCap",       # New prominent column
+                "Put P/$M MCap",        # New prominent column
+                "Total P/$M MCap",      # Overall scaled premium vs MCap
+                "Market Cap", 
                 "Current Price", 
                 "Price at Period Start", 
                 "Price Change %",
-                "Call Premium", "Put Premium",
-                "Total Premium",
+                "Bullish Prem",         # Absolute bullish premium
+                "Bearish Prem",         # Absolute bearish premium
+                "Total Call Vol. Prem", # Total call activity volume
+                "Total Put Vol. Prem",  # Total put activity volume
+                "Total Activity Prem"   # Overall total premium
             ]
-            # Ensure all expected columns exist in ticker_analysis_df for consistent display
+            
+            # Ensure all expected columns exist for consistent display
             for col in ordered_cols:
                 if col not in ticker_analysis_df.columns:
                     ticker_analysis_df[col] = np.nan 
             
             df_for_display = ticker_analysis_df[ordered_cols].copy()
 
-            # --- Ensure Percentage Columns are Numeric Before Sorting & Styling ---
-            # List of percentage columns that remain
-            percentage_cols_to_style = ['% of MCap', 'Call % MCap', 'Put % MCap'] 
-            price_change_col_to_style = ['Price Change %']
+            # --- Ensure relevant columns are Numeric Before Sorting & Styling ---
+            # These are the new ratio columns, ensure they are numeric for styling and sorting
+            ratio_cols_to_style = ["Call P/$M MCap", "Put P/$M MCap", "Total P/$M MCap"]
+            price_change_col_to_style = ['Price Change %'] # This is already a percentage
             
-            for col in percentage_cols_to_style + price_change_col_to_style:
+            for col in ratio_cols_to_style: # Price Change % is handled if it exists from analysis_results
                 if col in df_for_display.columns:
                     df_for_display[col] = pd.to_numeric(df_for_display[col], errors='coerce')
+            if 'Price Change %' in df_for_display.columns: # Ensure Price Change % is numeric too
+                 df_for_display['Price Change %'] = pd.to_numeric(df_for_display['Price Change %'], errors='coerce')
 
-            # --- APPLY DEFAULT SORT by "Call % MCap" ---
-            if "Call % MCap" in df_for_display.columns and not df_for_display.empty:
-                df_for_display.sort_values(by="Call % MCap", ascending=False, inplace=True)
-                df_for_display.reset_index(drop=True, inplace=True)
 
+            # --- APPLY DEFAULT SORT by "Call P/$M MCap" ---
+            if "Call P/$M MCap" in df_for_display.columns and not df_for_display.empty:
+                df_for_display.sort_values(by="Call P/$M MCap", ascending=False, inplace=True)
+                df_for_display.reset_index(drop=True, inplace=True) # Good practice
 
             # --- Prepare for Styling (format_dict and Styler object) ---
             format_dict = {}
-            for col in ['Market Cap', 'Total Premium', 'Call Premium', 'Put Premium', 'Bullish Prem', 'Bearish Prem']:
+            # Currency formatting for absolute premium and price values
+            for col in ['Market Cap', 'Total Activity Prem', 'Total Call Vol. Prem', 'Total Put Vol. Prem', 'Bullish Prem', 'Bearish Prem']:
                 if col in df_for_display.columns: format_dict[col] = "${:,.0f}"
             for col in ['Current Price', 'Price at Period Start']:
                 if col in df_for_display.columns: format_dict[col] = "${:,.2f}"
             
-            # Formatting for remaining percentage columns
-            for col in percentage_cols_to_style: 
-                if col in df_for_display.columns: format_dict[col] = "{:.4f}%"
+            # Formatting for "Premium per $1M MCap" columns (e.g., as number with 0 or 2 decimals)
+            for col in ratio_cols_to_style: 
+                if col in df_for_display.columns: format_dict[col] = "{:,.0f}" # e.g., "349" or use "{:,.2f}" for "349.47"
+            
+            # Formatting for Price Change %
             if 'Price Change %' in df_for_display.columns:
-                 format_dict['Price Change %'] = "{:.2f}%"
+                 format_dict['Price Change %'] = "{:.2f}%" # e.g., "5.20%"
 
             styler = df_for_display.style
             
             # --- Apply Background Gradients ---
-            # Gradient for Call % MCap, Put % MCap, and total % of MCap
-            mcap_percentage_cols_to_style_now = [col for col in percentage_cols_to_style if col in df_for_display.columns]
-            if mcap_percentage_cols_to_style_now:
+            # Gradient for Call P/$M MCap, Put P/$M MCap, and Total P/$M MCap
+            # Adjust vmin/vmax based on typical values (e.g., if typical max is 1000, set vmax=1000)
+            scaled_mcap_cols_to_style = [col for col in ratio_cols_to_style if col in df_for_display.columns]
+            if scaled_mcap_cols_to_style:
                 styler = styler.background_gradient(
-                    subset=mcap_percentage_cols_to_style_now, 
-                    cmap='Reds', # Or 'Oranges', or choose different ones per column
-                    vmin=0.0, 
-                    vmax=0.1 # Adjust vmax as needed (e.g., 0.1 for 0.1%)
+                    subset=scaled_mcap_cols_to_style, 
+                    cmap='Reds', 
+                    vmin=0, # Assuming these ratios are non-negative
+                    # vmax=1000 # Example: Adjust this based on your data's typical range
                 )
             
             if 'Price Change %' in df_for_display.columns:
                  styler = styler.background_gradient(
-                     subset=['Price Change %'], 
-                     cmap='RdYlGn', 
-                     vmin=-10, vmax=10, # Example: -10% to +10%
-                     axis=0 # Standardizes coloring across the column based on its own min/max if vmin/vmax not set, or fixed scale if set.
+                     subset=['Price Change %'], cmap='RdYlGn', vmin=-10, vmax=10, axis=0
                  )
 
             styler = styler.format(format_dict, na_rep="N/A")
-            styler = styler.set_properties(**{'text-align': 'right'})
+            styler = styler.set_properties(**{'text-align': 'right'}) # Align numbers
 
             st.dataframe(styler, use_container_width=True)
 
-            # Chart: Top N Tickers by % MCap (this can remain as is, using the total '% of MCap')
-            if not searched_ticker and not ticker_analysis_df.empty and '% of MCap' in ticker_analysis_df.columns:
-                top_n_mcap = st.slider("Number of Top Tickers to Chart (% MCap):", 5, 20, 10, key="top_n_mcap_slider_maindash_v2") # Changed key slightly
-                df_for_chart = ticker_analysis_df.copy()
-                df_for_chart["% of MCap"] = pd.to_numeric(df_for_chart["% of MCap"], errors='coerce')
-                df_sorted_for_mcap_chart = df_for_chart.dropna(subset=['% of MCap']).sort_values(by="% of MCap", ascending=False).head(top_n_mcap)
-                if not df_sorted_for_mcap_chart.empty:
-                    fig_top_tickers_mcap = px.bar(df_sorted_for_mcap_chart, x="Ticker", y="% of MCap", 
-                                                 title=f"Top {top_n_mcap} Tickers by Total Premium as % of Market Cap", 
-                                                 hover_data=['Total Premium', 'Market Cap'], 
-                                                 labels={'% of MCap': 'Total Premium % of MCap', 'Ticker': 'Ticker Symbol'})
-                    st.plotly_chart(fig_top_tickers_mcap, use_container_width=True)
+            # Chart: Top N Tickers by "Total P/$M MCap" (or "Call P/$M MCap")
+            # This chart should now use the new scaled metric.
+            # Let's sort by "Total P/$M MCap" for the chart for variety.
+            if not searched_ticker and not ticker_analysis_df.empty and "Total P/$M MCap" in ticker_analysis_df.columns:
+                top_n_scaled_mcap = st.slider("Number of Top Tickers to Chart (Prem/$M MCap):", 5, 20, 10, key="top_n_scaled_mcap_slider")
+                
+                df_for_chart_scaled = ticker_analysis_df.copy()
+                # Ensure the column for sorting/plotting is numeric
+                df_for_chart_scaled["Total P/$M MCap"] = pd.to_numeric(df_for_chart_scaled["Total P/$M MCap"], errors='coerce')
+                
+                df_sorted_for_scaled_chart = df_for_chart_scaled.dropna(subset=["Total P/$M MCap"]).sort_values(by="Total P/$M MCap", ascending=False).head(top_n_scaled_mcap)
+                
+                if not df_sorted_for_scaled_chart.empty:
+                    fig_top_tickers_scaled = px.bar(df_sorted_for_scaled_chart, 
+                                                 x="Ticker", 
+                                                 y="Total P/$M MCap", 
+                                                 title=f"Top {top_n_scaled_mcap} Tickers by Premium per $1M Market Cap", 
+                                                 hover_data=['Total Activity Prem', 'Market Cap'], 
+                                                 labels={'Total P/$M MCap': 'Premium per $1M Market Cap', 'Ticker': 'Ticker Symbol'})
+                    st.plotly_chart(fig_top_tickers_scaled, use_container_width=True)
         else:
             st.info("No detailed ticker analysis to display based on current filters.")
 
