@@ -22,16 +22,26 @@ market_cap_cache = {}
 def get_market_cap_st(ticker_symbol):
     if ticker_symbol in market_cap_cache:
         return market_cap_cache[ticker_symbol]
+    print(f"DEBUG_MCAP: --- Attempting yfinance fetch for {ticker_symbol} ---")
     try:
         ticker_obj = yf.Ticker(ticker_symbol)
         info = ticker_obj.info
+        if not info: # Check if info dictionary is empty
+            print(f"DEBUG_MCAP: {ticker_symbol} - yfinance .info was empty or None.")
+            market_cap_cache[ticker_symbol] = None
+            return None
         market_cap = info.get('marketCap')
-        if market_cap:
+        if market_cap is not None and market_cap > 0: # Ensure market_cap is a positive number
+            print(f"DEBUG_MCAP: {ticker_symbol} - Success! Market Cap: {market_cap}")
             market_cap_cache[ticker_symbol] = market_cap
             return market_cap
-        market_cap_cache[ticker_symbol] = None
-        return None
-    except Exception:
+        else:
+            print(f"DEBUG_MCAP: {ticker_symbol} - 'marketCap' key not found, is None, or zero in .info dict. Value: {market_cap}")
+            # print(f"DEBUG_MCAP: {ticker_symbol} - Available .info keys: {list(info.keys())}") # Optional: to see all keys
+            market_cap_cache[ticker_symbol] = None
+            return None
+    except Exception as e:
+        print(f"DEBUG_MCAP: {ticker_symbol} - ERROR during yfinance fetch: {e}")
         market_cap_cache[ticker_symbol] = None
         return None
 
@@ -139,15 +149,21 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
         
         price_at_period_start = None
         price_change_pct = np.nan
+        print(f"DEBUG_PRICE: For {ticker}, attempting to fetch history starting {selected_range_start_date_dt.strftime('%Y-%m-%d')}")
+
         try:
             start_hist_date = pd.to_datetime(selected_range_start_date_dt)
             history = yf.Ticker(ticker).history(start=start_hist_date, end=(start_hist_date + pd.Timedelta(days=4)))
             if not history.empty:
                 price_at_period_start = history['Close'].iloc[0]
+                actual_hist_start_date = history.index[0].strftime('%Y-%m-%d')
+                print(f"DEBUG_PRICE: {ticker} - Historical price found: {price_at_period_start} on {actual_hist_start_date}")
                 if current_price and price_at_period_start and price_at_period_start != 0:
                     price_change_pct = ((current_price - price_at_period_start) / price_at_period_start) * 100
+            else:
+                print(f"DEBUG_PRICE: {ticker} - yfinance .history returned empty DataFrame for start date {start_hist_date.strftime('%Y-%m-%d')}")
         except Exception as e:
-            print(f"Could not fetch hist price for {ticker} on {selected_range_start_date_dt.strftime('%Y-%m-%d')}: {e}")
+            print(f"DEBUG_PRICE: {ticker} - ERROR fetching history: {e}")
 
         analysis_results.append({
             "Ticker": ticker, "Market Cap": market_cap, "Current Price": current_price,
