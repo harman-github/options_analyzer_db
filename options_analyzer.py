@@ -422,7 +422,7 @@ def main_automated_ingestion():
         if 'EXPIRATION_DATE' in ingest_df.columns:
             ingest_df['EXPIRATION_DATE'] = pd.to_datetime(ingest_df['EXPIRATION_DATE'], format='%m/%d/%y', errors='coerce')
         
-        db_columns_map = {
+        db_columns_map_updated = {
             'data_date': 'data_date', 'UNDERLYING_TICKER': 'underlying_ticker',
             'STRIKE_PRICE': 'strike_price', 'EXPIRATION_DATE': 'expiration_date',
             'premium_usd_numeric': 'premium_usd', 'OPTION_ACTION': 'option_action',
