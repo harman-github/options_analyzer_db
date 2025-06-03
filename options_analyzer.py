@@ -386,21 +386,35 @@ def main_automated_ingestion():
         print(f"Identified {len(dates_to_process)} GSheet tabs to check/process: {dates_to_process}")
 
     processed_count = 0
-    for target_date_str_for_sheet in dates_to_process:
+    for target_date_str_for_sheet in dates_to_process: # Loop through only NEW dates
         print(f"\n--- Processing sheet tab: {target_date_str_for_sheet} ---")
-        
-        # --- PASS THE OPENED SPREADSHEET OBJECT ---
         options_df_from_sheet = get_data_from_worksheet_automated(spreadsheet, target_date_str_for_sheet)
 
         if options_df_from_sheet is None or options_df_from_sheet.empty:
-            print(f"No data loaded from worksheet '{target_date_str_for_sheet}'. Skipping ingestion for this date.")
+            print(f"No data loaded from GSheet '{target_date_str_for_sheet}'. Skipping.")
             continue
-        
-        # ... (rest of your ingestion logic: adding data_date, parsing premium, renaming, to_sql) ...
-        # Ensure this part is complete and correct as per your last working version
+
         ingest_df = options_df_from_sheet.copy()
-        data_date_for_db = pd.to_datetime(target_date_str_for_sheet).strftime('%Y-%m-%d')
-        ingest_df['data_date'] = data_date_for_db
+        data_date_obj_for_tiingo = pd.to_datetime(target_date_str_for_sheet).date()
+        data_date_str_for_db = data_date_obj_for_tiingo.strftime('%Y-%m-%d')
+        ingest_df['data_date'] = data_date_str_for_db
+
+        ingest_df['market_cap_ingested'] = np.nan
+        ingest_df['price_on_data_date'] = np.nan
+
+        if 'UNDERLYING_TICKER' in ingest_df.columns:
+            unique_tickers_in_sheet = ingest_df['UNDERLYING_TICKER'].dropna().unique()
+            for ticker_symbol in unique_tickers_in_sheet:
+                price_hist, mcap_hist = fetch_daily_data_from_tiingo(ticker_symbol, data_date_obj_for_tiingo, tiingo_client)
+
+                ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker_symbol, 'price_on_data_date'] = price_hist
+                ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker_symbol, 'market_cap_ingested'] = mcap_hist
+
+                # General "current" market cap update (refreshed weekly)
+                # This call also adds a delay internally if it fetches from Tiingo
+                get_and_update_general_market_cap(db_engine, ticker_symbol, tiingo_client) 
+                time.sleep(1.5)
+                
         if 'PREMIUM_USD' in ingest_df.columns:
             ingest_df['premium_usd_numeric'] = ingest_df['PREMIUM_USD'].apply(parse_human_readable_number)
         else:
@@ -417,18 +431,14 @@ def main_automated_ingestion():
             'price_on_data_date': 'price_on_data_date'
         }
         final_ingest_df = pd.DataFrame()
-        for df_col, db_col_name in db_columns_map.items():
+        
+        for df_col, db_col_name in db_columns_map_updated.items():
             if df_col in ingest_df.columns: final_ingest_df[db_col_name] = ingest_df[df_col]
-            else: final_ingest_df[db_col_name] = np.nan
+            else: final_ingest_df[db_col_name] = np.nan 
+        # Type coercions
         if 'data_date' in final_ingest_df.columns: final_ingest_df['data_date'] = pd.to_datetime(final_ingest_df['data_date'], errors='coerce').dt.date
         if 'expiration_date' in final_ingest_df.columns: final_ingest_df['expiration_date'] = pd.to_datetime(final_ingest_df['expiration_date'], errors='coerce').dt.date
-        print(f"\nDataFrame prepared for ingestion (first 5 rows): \n{final_ingest_df.head()}")
-        print(f"DEBUG: Columns in final_ingest_df before to_sql: {final_ingest_df.columns.tolist()}") # <<< ADD THIS
-        print(f"DEBUG: Index of final_ingest_df: {final_ingest_df.index}") # Optional: check index
-        print(f"Data types: \n{final_ingest_df.dtypes}")    
-        if 'id' in final_ingest_df.columns:
-            print("WARNING: 'id' column IS PRESENT in final_ingest_df. This is likely the cause of the error.")    
-        for col_to_num in ['strike_price', 'premium_usd']:
+        for col_to_num in ['strike_price', 'premium_usd', 'market_cap_ingested', 'price_on_data_date']:
             if col_to_num in final_ingest_df.columns: final_ingest_df[col_to_num] = pd.to_numeric(final_ingest_df[col_to_num], errors='coerce')
 
         if not final_ingest_df.empty:
@@ -439,13 +449,14 @@ def main_automated_ingestion():
                 continue
             delete_data_for_date(db_engine, data_date_for_db)
             try:
-                final_ingest_df.to_sql('options_activity', db_engine, if_exists='append', index=False, chunksize=1000)
-                print(f"Successfully ingested {len(final_ingest_df)} rows for date {data_date_for_db} into PostgreSQL.")
+                final_ingest_df.to_sql('options_activity', db_engine, if_exists='append', index=False, chunksize=500)
+                print(f"Successfully ingested {len(final_ingest_df)} rows for date {data_date_str_for_db} into PostgreSQL.")
                 processed_count += 1
-            except Exception as e:
-                print(f"Error ingesting data into PostgreSQL for {data_date_for_db}: {e}")
-        else:
-            print(f"No data in final_ingest_df for {target_date_str_for_sheet} to load.")
+            except Exception as e: print(f"Error ingesting data for {data_date_str_for_db}: {e}")
+        else: print(f"No data in final_ingest_df for {target_date_str_for_sheet} to load.")
+
+    print(f"\nScript finished. Processed and attempted ingestion for {processed_count} date(s).")
+
             
     print(f"\nProcessed and attempted ingestion for {processed_count} date(s).")
     print(f"options_analyzer.py script finished at {datetime.now(timezone.utc)}")
