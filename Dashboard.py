@@ -399,102 +399,102 @@ else:
                 ticker_analysis_df = analyze_ticker_dashboard(view_data, pd.to_datetime(selected_start_date)) 
             
             if not ticker_analysis_df.empty:
-            # 1. Define the new desired column order
-            ordered_cols = [
-                "Ticker", 
-                "Bullish MCap Impact",  # New prominent column
-                "Bearish MCap Impact",  # New prominent column
-                "Market Cap", 
-                "Current Price", 
-                "Price at Period Start", 
-                "Price Change %",
-                "Bullish Prem",         # Absolute bullish premium
-                "Bearish Prem",         # Absolute bearish premium
-                "Total Call Vol. Prem", 
-                "Total Put Vol. Prem",  
-                "Total Activity Prem"
-            ]
-            
-            df_for_display_intermediate = ticker_analysis_df.copy()
-            for col in ordered_cols: # Ensure all columns exist for consistent structure
-                if col not in df_for_display_intermediate.columns:
-                    df_for_display_intermediate[col] = np.nan
-            
-            df_for_display = df_for_display_intermediate[ordered_cols].copy()
-
-            # 2. Ensure columns for sorting and styling are numeric
-            numeric_cols_for_style_sort = ["Bullish MCap Impact", "Bearish MCap Impact", "Price Change %"]
-            for col in numeric_cols_for_style_sort:
-                if col in df_for_display.columns:
-                    df_for_display[col] = pd.to_numeric(df_for_display[col], errors='coerce')
-
-            # 3. Apply Default Sort by "Bullish MCap Impact" descending
-            if "Bullish MCap Impact" in df_for_display.columns and not df_for_display.empty:
-                df_for_display.sort_values(by="Bullish MCap Impact", ascending=False, inplace=True)
-                df_for_display.reset_index(drop=True, inplace=True)
-
-            # 4. Define Formatting for Styler
-            format_dict = {}
-            currency_cols_int = ['Market Cap', 'Total Activity Prem', 'Total Call Vol. Prem', 'Total Put Vol. Prem', 'Bullish Prem', 'Bearish Prem']
-            currency_cols_float = ['Current Price', 'Price at Period Start']
-            # Format new "Impact" columns (scaled percentages)
-            impact_cols = ["Bullish MCap Impact", "Bearish MCap Impact"]
-
-            for col in currency_cols_int:
-                if col in df_for_display.columns: format_dict[col] = "${:,.0f}"
-            for col in currency_cols_float:
-                if col in df_for_display.columns: format_dict[col] = "${:,.2f}"
-            for col in impact_cols: 
-                if col in df_for_display.columns: format_dict[col] = "{:,.1f}" # e.g., 34.9 (1 decimal place)
-            if 'Price Change %' in df_for_display.columns:
-                 format_dict['Price Change %'] = "{:.2f}%" # Still a direct percentage
-
-            # 5. Apply Styles using Pandas Styler
-            styler = df_for_display.style
-            
-            if "Bullish MCap Impact" in df_for_display.columns:
-                styler = styler.background_gradient(subset=["Bullish MCap Impact"], cmap='Greens', vmin=0) # Adjust vmax if needed, e.g., vmax=100
-            if "Bearish MCap Impact" in df_for_display.columns:
-                styler = styler.background_gradient(subset=["Bearish MCap Impact"], cmap='Reds', vmin=0) # Adjust vmax if needed
-
-            if 'Price Change %' in df_for_display.columns:
-                 styler = styler.background_gradient(subset=['Price Change %'], cmap='RdYlGn', vmin=-10, vmax=10, axis=0)
-
-            styler = styler.format(format_dict, na_rep="N/A")
-            styler = styler.set_properties(**{'text-align': 'right'})
-
-            # 6. Display the Styled DataFrame
-            st.dataframe(styler, use_container_width=True)
-
-            # 7. Chart: Top N Tickers 
-            #    This chart should now ideally use "Bullish MCap Impact" or let user choose
-            if not searched_ticker and not ticker_analysis_df.empty: # Use original ticker_analysis_df for numeric data
-                st.markdown("---")
-                # Ensure 'Bullish MCap Impact' exists and is numeric in original for charting
-                if "Bullish MCap Impact" in ticker_analysis_df.columns:
-                    chart_metric_col = "Bullish MCap Impact"
-                    ticker_analysis_df[chart_metric_col] = pd.to_numeric(ticker_analysis_df[chart_metric_col], errors='coerce')
-
-                    top_n_impact = st.slider(f"Number of Top Tickers to Chart ({chart_metric_col}):", 
-                                              min_value=5, max_value=25, value=10, 
-                                              key="top_n_bullish_impact_slider")
-                    
-                    df_sorted_for_impact_chart = ticker_analysis_df.dropna(subset=[chart_metric_col]).sort_values(
-                        by=chart_metric_col, ascending=False
-                    ).head(top_n_impact)
-                    
-                    if not df_sorted_for_impact_chart.empty:
-                        fig_top_tickers_impact = px.bar(df_sorted_for_impact_chart, 
-                                                     x="Ticker", 
-                                                     y=chart_metric_col, 
-                                                     title=f"Top {top_n_impact} Tickers by {chart_metric_col}",
-                                                     hover_data=['Bullish Prem', 'Market Cap'], 
-                                                     labels={chart_metric_col: chart_metric_col, 'Ticker': 'Ticker Symbol'})
-                        st.plotly_chart(fig_top_tickers_impact, use_container_width=True)
-                    else:
-                        st.caption(f"Not enough data to display Top Tickers by {chart_metric_col} chart.")
-        else:
-            st.info("No detailed ticker analysis to display based on current filters.")
+                # 1. Define the new desired column order
+                ordered_cols = [
+                    "Ticker", 
+                    "Bullish MCap Impact",  # New prominent column
+                    "Bearish MCap Impact",  # New prominent column
+                    "Market Cap", 
+                    "Current Price", 
+                    "Price at Period Start", 
+                    "Price Change %",
+                    "Bullish Prem",         # Absolute bullish premium
+                    "Bearish Prem",         # Absolute bearish premium
+                    "Total Call Vol. Prem", 
+                    "Total Put Vol. Prem",  
+                    "Total Activity Prem"
+                ]
+                
+                df_for_display_intermediate = ticker_analysis_df.copy()
+                for col in ordered_cols: # Ensure all columns exist for consistent structure
+                    if col not in df_for_display_intermediate.columns:
+                        df_for_display_intermediate[col] = np.nan
+                
+                df_for_display = df_for_display_intermediate[ordered_cols].copy()
+    
+                # 2. Ensure columns for sorting and styling are numeric
+                numeric_cols_for_style_sort = ["Bullish MCap Impact", "Bearish MCap Impact", "Price Change %"]
+                for col in numeric_cols_for_style_sort:
+                    if col in df_for_display.columns:
+                        df_for_display[col] = pd.to_numeric(df_for_display[col], errors='coerce')
+    
+                # 3. Apply Default Sort by "Bullish MCap Impact" descending
+                if "Bullish MCap Impact" in df_for_display.columns and not df_for_display.empty:
+                    df_for_display.sort_values(by="Bullish MCap Impact", ascending=False, inplace=True)
+                    df_for_display.reset_index(drop=True, inplace=True)
+    
+                # 4. Define Formatting for Styler
+                format_dict = {}
+                currency_cols_int = ['Market Cap', 'Total Activity Prem', 'Total Call Vol. Prem', 'Total Put Vol. Prem', 'Bullish Prem', 'Bearish Prem']
+                currency_cols_float = ['Current Price', 'Price at Period Start']
+                # Format new "Impact" columns (scaled percentages)
+                impact_cols = ["Bullish MCap Impact", "Bearish MCap Impact"]
+    
+                for col in currency_cols_int:
+                    if col in df_for_display.columns: format_dict[col] = "${:,.0f}"
+                for col in currency_cols_float:
+                    if col in df_for_display.columns: format_dict[col] = "${:,.2f}"
+                for col in impact_cols: 
+                    if col in df_for_display.columns: format_dict[col] = "{:,.1f}" # e.g., 34.9 (1 decimal place)
+                if 'Price Change %' in df_for_display.columns:
+                     format_dict['Price Change %'] = "{:.2f}%" # Still a direct percentage
+    
+                # 5. Apply Styles using Pandas Styler
+                styler = df_for_display.style
+                
+                if "Bullish MCap Impact" in df_for_display.columns:
+                    styler = styler.background_gradient(subset=["Bullish MCap Impact"], cmap='Greens', vmin=0) # Adjust vmax if needed, e.g., vmax=100
+                if "Bearish MCap Impact" in df_for_display.columns:
+                    styler = styler.background_gradient(subset=["Bearish MCap Impact"], cmap='Reds', vmin=0) # Adjust vmax if needed
+    
+                if 'Price Change %' in df_for_display.columns:
+                     styler = styler.background_gradient(subset=['Price Change %'], cmap='RdYlGn', vmin=-10, vmax=10, axis=0)
+    
+                styler = styler.format(format_dict, na_rep="N/A")
+                styler = styler.set_properties(**{'text-align': 'right'})
+    
+                # 6. Display the Styled DataFrame
+                st.dataframe(styler, use_container_width=True)
+    
+                # 7. Chart: Top N Tickers 
+                #    This chart should now ideally use "Bullish MCap Impact" or let user choose
+                if not searched_ticker and not ticker_analysis_df.empty: # Use original ticker_analysis_df for numeric data
+                    st.markdown("---")
+                    # Ensure 'Bullish MCap Impact' exists and is numeric in original for charting
+                    if "Bullish MCap Impact" in ticker_analysis_df.columns:
+                        chart_metric_col = "Bullish MCap Impact"
+                        ticker_analysis_df[chart_metric_col] = pd.to_numeric(ticker_analysis_df[chart_metric_col], errors='coerce')
+    
+                        top_n_impact = st.slider(f"Number of Top Tickers to Chart ({chart_metric_col}):", 
+                                                  min_value=5, max_value=25, value=10, 
+                                                  key="top_n_bullish_impact_slider")
+                        
+                        df_sorted_for_impact_chart = ticker_analysis_df.dropna(subset=[chart_metric_col]).sort_values(
+                            by=chart_metric_col, ascending=False
+                        ).head(top_n_impact)
+                        
+                        if not df_sorted_for_impact_chart.empty:
+                            fig_top_tickers_impact = px.bar(df_sorted_for_impact_chart, 
+                                                         x="Ticker", 
+                                                         y=chart_metric_col, 
+                                                         title=f"Top {top_n_impact} Tickers by {chart_metric_col}",
+                                                         hover_data=['Bullish Prem', 'Market Cap'], 
+                                                         labels={chart_metric_col: chart_metric_col, 'Ticker': 'Ticker Symbol'})
+                            st.plotly_chart(fig_top_tickers_impact, use_container_width=True)
+                        else:
+                            st.caption(f"Not enough data to display Top Tickers by {chart_metric_col} chart.")
+            else:
+                st.info("No detailed ticker analysis to display based on current filters.")
 
     # --- Expiration Summary Table & Charts ---
     expiration_title = f"Expiration Date Summaries & Charts{f' for {searched_ticker}' if searched_ticker else ' (Selected Period)'}"
