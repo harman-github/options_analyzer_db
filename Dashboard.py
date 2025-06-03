@@ -165,23 +165,6 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
         })
     return pd.DataFrame(analysis_results)
 
-        analysis_results.append({
-            "Ticker": ticker, "Market Cap": market_cap, "Current Price": current_price,
-            "Price at Period Start": price_at_period_start, "Price Change %": price_change_pct,
-            
-            "Total Activity Prem": total_premium_for_ticker, # Absolute premium
-            "Call Vol. Prem": total_call_premium,           # Absolute premium
-            "Put Vol. Prem": total_put_premium,             # Absolute premium
-            "Bullish Prem": bullish_premium,                 # Absolute premium
-            "Bearish Prem": bearish_premium,                 # Absolute premium
-
-            # Renamed and recalculated MCap ratios
-            "Total P/$M MCap": total_prem_per_mil_mcap,
-            "Call P/$M MCap": call_prem_per_mil_mcap,
-            "Put P/$M MCap": put_prem_per_mil_mcap,
-        })
-    return pd.DataFrame(analysis_results)
-
 def create_expiration_summary_table(options_df_for_period):
     if options_df_for_period.empty or not all(col in options_df_for_period.columns for col in ['expiration_date', 'premium_usd', 'underlying_ticker', 'option_type', 'sentiment']):
         return pd.DataFrame()
