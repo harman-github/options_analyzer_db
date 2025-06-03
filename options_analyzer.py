@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone # Added timezone
 # import psycopg2 # Not directly used if using SQLAlchemy engine
 from sqlalchemy import create_engine, text as sql_text # Added text for SQLAlchemy core execution
 from google.oauth2.service_account import Credentials # For gspread authentication
+import time
+from tiingo import TiingoClient
 
 # --- Configuration from Environment Variables ---
 DB_HOST = os.environ.get("NEON_DB_HOST")
@@ -14,12 +16,14 @@ DB_PORT = 5432
 DB_NAME = os.environ.get("NEON_DB_NAME")
 DB_USER = os.environ.get("NEON_DB_USER")
 DB_PASSWORD = os.environ.get("NEON_DB_PASSWORD")
+TIINGO_API_KEY = os.environ.get("TIINGO_API_KEY") 
 
 SPREADSHEET_NAME = os.environ.get("GSHEET_SPREADSHEET_NAME", "Unusual Options Flow Database")
 GSHEET_CREDENTIALS_JSON_STR = os.environ.get("GSHEET_CREDENTIALS_JSON")
 
 # --- Global Variables (Initialized in main_automated_ingestion) ---
 db_engine = None
+tiingo_client = None
 
 # --- Helper Functions (parse_human_readable_number, clean_strike_price_string) ---
 def is_valid_date_format(date_string, date_format="%Y-%m-%d"):
@@ -87,14 +91,25 @@ def create_options_activity_table(engine): # Takes SQLAlchemy engine
                 option_action TEXT,
                 option_type TEXT,
                 sentiment TEXT,
+                market_cap_ingested BIGINT,
+                price_on_data_date REAL,        
                 UNIQUE (data_date, underlying_ticker, strike_price, expiration_date, option_action, option_type, sentiment, premium_usd) -- Made more robust
             );
-            """)) # Using option_type and sentiment in UNIQUE constraint
+            """))
+            print("Table 'options_activity' checked/created successfully.")
+
+            connection.execute(sql_text("""
+            CREATE TABLE IF NOT EXISTS ticker_market_caps (
+                ticker TEXT PRIMARY KEY,
+                market_cap BIGINT,
+                last_updated TIMESTAMP WITHOUT TIME ZONE
+            );
+            """))
+            print("Table 'ticker_market_caps' checked/created successfully.")
             connection.commit()
-        print("Table 'options_activity' checked/created successfully.")
     except Exception as e:
-        print(f"Error creating table: {e}")
-        raise # Re-raise to fail the Action if critical
+        print(f"Error creating supporting tables: {e}")
+        raise
 
 def delete_data_for_date(engine, target_date_str): # Takes SQLAlchemy engine
     """Deletes existing data for a specific date."""
