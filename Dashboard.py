@@ -91,7 +91,7 @@ def get_current_price(ticker_symbol):
             if attempt == 0: # If first attempt fails with an exception
                 print(f"Retrying price fetch for {ticker_symbol} in 60s due to error...")
                 # st.info(f"Error fetching price for {ticker_symbol}, retrying in 1 minute...") # Optional UI
-                time.sleep(60)
+                time.sleep(15)
             else: # Second attempt also failed with an exception
                  print(f"Error fetching current price for {ticker_symbol} after 2 attempts: {e}")
     return None # Return None if all attempts fail
