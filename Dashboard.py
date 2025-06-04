@@ -143,101 +143,80 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
         return pd.DataFrame()
 
     analysis_results = []
-    # Using sorted unique tickers for consistent order if not explicitly sorted later by a metric
     unique_tickers = sorted(options_df_for_period['underlying_ticker'].unique())
 
-    if len(unique_tickers) > 5: # Show progress if more than 5 tickers
-        progress_bar = st.progress(0)
-        status_text = st.empty() # To show which ticker is being processed
-
-    for i, ticker in enumerate(unique_tickers):
+    for ticker in unique_tickers:
         if not ticker or pd.isna(ticker) or str(ticker).strip().upper() == 'NAN' or not str(ticker).strip():
-            if len(unique_tickers) > 5: progress_bar.progress((i + 1) / len(unique_tickers)) # Still update progress
             continue
 
-        if len(unique_tickers) > 5:
-            status_text.text(f"Fetching live data for {ticker} ({i+1}/{len(unique_tickers)})...")
+        # Fetch live data first
+        # Initialize current_price to None before the call for safety
+        current_price = None 
+        current_price = get_current_price(ticker) # This function should handle its own errors and return None if failed
 
-        market_cap_to_use_for_calc = np.nan # Default
-        price_at_period_start_from_db = np.nan # Default
-        ticker_df = options_df_for_period[options_df_for_period['underlying_ticker'] == ticker]
+        # Use market_cap_ingested from the database records for this ticker within the period
+        ticker_df_for_mcap = options_df_for_period[options_df_for_period['underlying_ticker'] == ticker]
+        market_cap_to_use_for_calc = np.nan # Default to NaN
 
-        if not ticker_df.empty:
-            # Use market_cap_ingested and price_on_data_date from the most recent record
-            # of this ticker within the selected period from view_data/options_df_for_period
-            latest_record_in_period = ticker_df.sort_values(by='data_date', ascending=False).iloc[0]
-
-            if 'market_cap_ingested' in latest_record_in_period:
-                market_cap_to_use_for_calc = latest_record_in_period['market_cap_ingested']
-
-            # "Price at Period Start" should be based on the actual start of the selected range,
-            # or the earliest activity for that ticker in the range. 
-            # The 'price_on_data_date' from latest_record_in_period is for *that specific options record's date*.
-            # We still need price_at_period_start for consistency if comparing to current price over the whole selected range.
-            # The original logic for price_at_period_start fetching based on selected_range_start_date_dt is probably still best for that specific column.
-            # However, for "% MCap" calculations, using the market_cap_ingested from the DB is key.
-
-            # Fetch historical price for "Price at Period Start" column
-            # (This is kept separate from price_on_data_date which is per record)
-            price_at_period_start_live_fetch = None # Renamed to avoid confusion
-            try:
-                start_hist_date = pd.to_datetime(selected_range_start_date_dt)
-                history = yf.Ticker(ticker).history(start=start_hist_date, end=(start_hist_date + pd.Timedelta(days=4)))
-                if not history.empty:
-                    price_at_period_start_live_fetch = history['Close'].iloc[0]
-            except Exception as e:
-                print(f"Could not fetch hist price for {ticker} on {selected_range_start_date_dt.strftime('%Y-%m-%d')}: {e}")
-
-
-        mcap_val_actual = market_cap_to_use_for_calc if pd.notnull(market_cap_to_use_for_calc) and market_cap_to_use_for_calc > 0 else 0
-
+        if not ticker_df_for_mcap.empty and 'market_cap_ingested' in ticker_df_for_mcap.columns:
+            latest_record_for_ticker = ticker_df_for_mcap.sort_values(by='data_date', ascending=False).iloc[0]
+            mcap_val = latest_record_for_ticker['market_cap_ingested']
+            if pd.notnull(mcap_val): # Ensure it's not NaN before assigning
+                market_cap_to_use_for_calc = mcap_val
+        
+        # This is the market cap that will be displayed and used for calculations.
+        # If you want a "Live Market Cap" for display as well, you'd call get_market_cap_st(ticker) here.
+        # For now, we are using the ingested one as the primary "Market Cap".
+        
+        mcap_val_for_calc = market_cap_to_use_for_calc if pd.notnull(market_cap_to_use_for_calc) and market_cap_to_use_for_calc > 0 else 0
+        
+        # --- Premium calculations based on ticker_df_for_mcap (which is options_df_for_period filtered for the ticker) ---
+        ticker_df = ticker_df_for_mcap # Use the already filtered DataFrame
         total_premium_for_ticker, total_call_premium, total_put_premium, bullish_premium, bearish_premium = 0.0, 0.0, 0.0, 0.0, 0.0
         if 'premium_usd' in ticker_df.columns and pd.api.types.is_numeric_dtype(ticker_df['premium_usd']):
             ticker_df_cleaned_premium = ticker_df.dropna(subset=['premium_usd'])
             total_premium_for_ticker = ticker_df_cleaned_premium['premium_usd'].sum()
-            total_call_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['option_type'] == 'CALL']['premium_usd'].sum()
-            total_put_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['option_type'] == 'PUT']['premium_usd'].sum()
-            bullish_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['sentiment'] == 'Bullish']['premium_usd'].sum()
-            bearish_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['sentiment'] == 'Bearish']['premium_usd'].sum()
+            # Ensure sentiment and option_type columns exist and are handled correctly
+            if 'sentiment' in ticker_df_cleaned_premium.columns:
+                sentiment_series = ticker_df_cleaned_premium['sentiment'].fillna('UNKNOWN').astype(str).str.strip().str.upper()
+                bullish_premium = ticker_df_cleaned_premium.loc[sentiment_series == 'BULLISH', 'premium_usd'].sum()
+                bearish_premium = ticker_df_cleaned_premium.loc[sentiment_series == 'BEARISH', 'premium_usd'].sum()
+            if 'option_type' in ticker_df_cleaned_premium.columns:
+                total_call_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['option_type'].str.upper() == 'CALL']['premium_usd'].sum()
+                total_put_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['option_type'].str.upper() == 'PUT']['premium_usd'].sum()
+
+        bullish_mcap_impact = (bullish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
+        bearish_mcap_impact = (bearish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
         
-        bullish_mcap_impact = (bullish_premium / mcap_val_actual)* 100000 if mcap_val_actual > 0 else 0
-        bearish_mcap_impact = (bearish_premium / mcap_val_actual)* 100000 if mcap_val_actual > 0 else 0
+        price_at_period_start = np.nan # Initialize
+        price_change_pct = np.nan      # Initialize
         
-        price_at_period_start = None
-        price_change_pct = np.nan
         try:
             start_hist_date = pd.to_datetime(selected_range_start_date_dt)
             history = yf.Ticker(ticker).history(start=start_hist_date, end=(start_hist_date + pd.Timedelta(days=4)))
             if not history.empty:
                 price_at_period_start = history['Close'].iloc[0]
-                if current_price and price_at_period_start and price_at_period_start != 0:
+                # current_price is defined above the try block.
+                if pd.notnull(current_price) and pd.notnull(price_at_period_start) and price_at_period_start != 0:
                     price_change_pct = ((current_price - price_at_period_start) / price_at_period_start) * 100
         except Exception as e:
-            # Keep this print for yfinance errors if you want to monitor them in console
-            print(f"Could not fetch hist price for {ticker} on {selected_range_start_date_dt.strftime('%Y-%m-%d')}: {e}")
+            # current_price should be defined here, even if None. The f-string will handle None correctly.
+            print(f"Could not fetch historical price for {ticker} (current price: {current_price}) on {selected_range_start_date_dt.strftime('%Y-%m-%d')}: {e}")
 
         analysis_results.append({
             "Ticker": ticker, 
-            "Market Cap (units of $1,000)": market_cap_to_use_for_calc, 
-            "Current Price": current_price,
-            "Price at Period Start": price_at_period_start_live_fetch, 
+            "Market Cap (per $1,000)": market_cap_to_use_for_calc, # Using the ingested/derived market cap
+            "Current Price": current_price, # Live fetched
+            "Price at Period Start": price_at_period_start, 
             "Price Change %": price_change_pct,
             "Total Activity Prem": total_premium_for_ticker,
             "Total Call Vol. Prem": total_call_premium,      
-            "Total Put Vol. Prem": total_put_premium,
+            "Total Put Vol. Prem": total_put_premium,        
             "Bullish Prem": bullish_premium, 
             "Bearish Prem": bearish_premium,
-            "Bullish MCap Score": bullish_mcap_impact, # Scaled value, e.g., 34.9
-            "Bearish MCap Score": bearish_mcap_impact  # Scaled value
+            "Bullish MCap Impact": bullish_mcap_impact,
+            "Bearish MCap Impact": bearish_mcap_impact
         })
-        time.sleep(0.2) # Sleep for 200 milliseconds
-
-        if len(unique_tickers) > 5: # Update progress bar
-            progress_bar.progress((i + 1) / len(unique_tickers))
-    
-    if len(unique_tickers) > 5: # Clear progress items after loop
-        progress_bar.empty()
-        status_text.empty()
     return pd.DataFrame(analysis_results)
 
 def create_expiration_summary_table(options_df_for_period):
