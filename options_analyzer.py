@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone # Added timezone
 from sqlalchemy import create_engine, text as sql_text # Added text for SQLAlchemy core execution
 from google.oauth2.service_account import Credentials # For gspread authentication
 import time
-from tiingo import TiingoClient
+import yfinance as yf
 
 # --- Configuration from Environment Variables ---
 DB_HOST = os.environ.get("NEON_DB_HOST")
@@ -82,30 +82,21 @@ def create_options_activity_table(engine): # Takes SQLAlchemy engine
         with engine.connect() as connection:
             connection.execute(sql_text("""
             CREATE TABLE IF NOT EXISTS options_activity (
-                id SERIAL PRIMARY KEY,
-                data_date DATE NOT NULL,
+                id SERIAL PRIMARY KEY, 
+                data_date DATE NOT NULL, 
                 underlying_ticker TEXT NOT NULL,
-                strike_price REAL,
-                expiration_date DATE,
+                strike_price REAL, 
+                expiration_date DATE, 
                 premium_usd REAL,
-                option_action TEXT,
-                option_type TEXT,
+                option_action TEXT, 
+                option_type TEXT, 
                 sentiment TEXT,
-                market_cap_ingested BIGINT,
+                market_cap_ingested BIGINT,      
                 price_on_data_date REAL,        
-                UNIQUE (data_date, underlying_ticker, strike_price, expiration_date, option_action, option_type, sentiment, premium_usd) -- Made more robust
+                UNIQUE (data_date, underlying_ticker, strike_price, expiration_date, option_action, option_type, sentiment, premium_usd)
             );
             """))
             print("Table 'options_activity' checked/created successfully.")
-
-            connection.execute(sql_text("""
-            CREATE TABLE IF NOT EXISTS ticker_market_caps (
-                ticker TEXT PRIMARY KEY,
-                market_cap BIGINT,
-                last_updated TIMESTAMP WITHOUT TIME ZONE
-            );
-            """))
-            print("Table 'ticker_market_caps' checked/created successfully.")
             connection.commit()
     except Exception as e:
         print(f"Error creating supporting tables: {e}")
@@ -292,11 +283,11 @@ def get_and_update_general_market_cap(engine, ticker_symbol, client, force_refre
 
 # --- Main Ingestion Logic for Automation ---
 def main_automated_ingestion():
-    global db_engine, tiingo_client
+    global db_engine
     print(f"options_analyzer.py script started at {datetime.now(timezone.utc)}")
     print("Starting automated data ingestion with new sync logic...")
 
-    if not all([DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, GSHEET_CREDENTIALS_JSON_STR, SPREADSHEET_NAME, TIINGO_API_KEY]):
+    if not all([DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, GSHEET_CREDENTIALS_JSON_STR, SPREADSHEET_NAME]):
         print("ERROR: Critical environment variables are missing. Exiting.")
         return
 
@@ -308,12 +299,6 @@ def main_automated_ingestion():
     except Exception as e:
         print(f"Failed to create SQLAlchemy engine or initial table: {e}")
         return
-    
-    try:
-        tiingo_config = {'api_key': TIINGO_API_KEY, 'session': True}
-        tiingo_client = TiingoClient(tiingo_config)
-        print("Tiingo client initialized.")
-    except Exception as e: print(f"Failed to initialize Tiingo client: {e}"); return
 
     # Authenticate gspread AND OPEN SPREADSHEET ONCE
     try:
@@ -335,16 +320,10 @@ def main_automated_ingestion():
     try:
         worksheets_list = spreadsheet.worksheets() # API call
         for ws in worksheets_list:
-            if is_valid_date_format(ws.title):
-                gsheet_tab_dates_to_check.append(ws.title)
+            if is_valid_date_format(ws.title): gsheet_tab_dates_to_check.append(ws.title)
         print(f"Found {len(gsheet_tab_dates_to_check)} potential date tabs in Google Sheet: {gsheet_tab_dates_to_check}")
     except Exception as e:
         print(f"Error fetching worksheet list from Google Sheets: {e}")
-        return
-        
-    if not gsheet_tab_dates_to_check:
-        print("No valid date-formatted worksheet tabs found in Google Sheet. Nothing to process.")
-        print(f"options_analyzer.py script finished at {datetime.now(timezone.utc)}")
         return
 
     # 2. Get distinct data_dates already in the PostgreSQL database (logic remains the same)
@@ -386,6 +365,8 @@ def main_automated_ingestion():
         print(f"Identified {len(dates_to_process)} GSheet tabs to check/process: {dates_to_process}")
 
     processed_count = 0
+    run_market_data_cache = {}
+    
     for target_date_str_for_sheet in dates_to_process: # Loop through only NEW dates
         print(f"\n--- Processing sheet tab: {target_date_str_for_sheet} ---")
         options_df_from_sheet = get_data_from_worksheet_automated(spreadsheet, target_date_str_for_sheet)
@@ -395,8 +376,8 @@ def main_automated_ingestion():
             continue
 
         ingest_df = options_df_from_sheet.copy()
-        data_date_obj_for_tiingo = pd.to_datetime(target_date_str_for_sheet).date()
-        data_date_str_for_db = data_date_obj_for_tiingo.strftime('%Y-%m-%d')
+        data_date_obj_for_yf = pd.to_datetime(target_date_str_for_sheet).date()
+        data_date_str_for_db = data_date_obj_for_yf.strftime('%Y-%m-%d')
         ingest_df['data_date'] = data_date_str_for_db
 
         ingest_df['market_cap_ingested'] = np.nan
@@ -404,37 +385,62 @@ def main_automated_ingestion():
 
         if 'UNDERLYING_TICKER' in ingest_df.columns:
             unique_tickers_in_sheet = ingest_df['UNDERLYING_TICKER'].dropna().unique()
+            print(f"Fetching market data using yfinance for {len(unique_tickers_in_sheet)} tickers in sheet {target_date_str_for_sheet}...")
+
             for ticker_symbol in unique_tickers_in_sheet:
-                price_hist, mcap_hist = fetch_daily_data_from_tiingo(ticker_symbol, data_date_obj_for_tiingo, tiingo_client)
+                if ticker_symbol not in run_market_data_cache: # Check run-time cache first
+                    print(f"  yfinance: Fetching for {ticker_symbol} on {data_date_str_for_db}...")
+                    mcap = None
+                    price_hist = None
+                    try:
+                        ticker_obj = yf.Ticker(ticker_symbol)
+                        # Get "current" market cap at time of ingestion
+                        info = ticker_obj.info
+                        mcap = info.get('marketCap')
 
-                ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker_symbol, 'price_on_data_date'] = price_hist
-                ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker_symbol, 'market_cap_ingested'] = mcap_hist
+                        # Get EOD price for the specific data_date
+                        # Fetch a small window around the date to ensure we get data if it was a non-trading day
+                        start_hist = data_date_obj_for_yf
+                        end_hist = start_hist + timedelta(days=3) # look forward a few days
+                        hist_data = ticker_obj.history(start=start_hist.strftime('%Y-%m-%d'), 
+                                                       end=end_hist.strftime('%Y-%m-%d'))
+                        if not hist_data.empty:
+                            
+                            if pd.to_datetime(data_date_str_for_db).tz_localize(hist_data.index.tz) in hist_data.index :
+                                price_hist = hist_data.loc[data_date_str_for_db]['Close']
+                            elif not hist_data.empty :
+                                price_hist = hist_data['Close'].iloc[0] # first available price in window
 
-                # General "current" market cap update (refreshed weekly)
-                # This call also adds a delay internally if it fetches from Tiingo
-                get_and_update_general_market_cap(db_engine, ticker_symbol, tiingo_client) 
-                time.sleep(1.5)
+                        run_market_data_cache[ticker_symbol] = {'mcap': mcap, 'price': price_hist}
+                        print(f"  yfinance: {ticker_symbol} - Mcap: {mcap}, Price on {data_date_str_for_db}: {price_hist}")
+                        time.sleep(2) # Delay AFTER EACH yfinance Ticker call for different tickers
+                    except Exception as e:
+                        print(f"  yfinance: Error for {ticker_symbol}: {e}")
+                        run_market_data_cache[ticker_symbol] = {'mcap': None, 'price': None}
+
+
+                ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker_symbol, 'market_cap_ingested'] = run_market_data_cache[ticker_symbol]['mcap']
+                ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker_symbol, 'price_on_data_date'] = run_market_data_cache[ticker_symbol]['price']
+
                 
         if 'PREMIUM_USD' in ingest_df.columns:
             ingest_df['premium_usd_numeric'] = ingest_df['PREMIUM_USD'].apply(parse_human_readable_number)
-        else:
-            ingest_df['premium_usd_numeric'] = np.nan
+        else: ingest_df['premium_usd_numeric'] = np.nan
         if 'EXPIRATION_DATE' in ingest_df.columns:
             ingest_df['EXPIRATION_DATE'] = pd.to_datetime(ingest_df['EXPIRATION_DATE'], format='%m/%d/%y', errors='coerce')
-        
+
         db_columns_map_updated = {
             'data_date': 'data_date', 'UNDERLYING_TICKER': 'underlying_ticker',
             'STRIKE_PRICE': 'strike_price', 'EXPIRATION_DATE': 'expiration_date',
             'premium_usd_numeric': 'premium_usd', 'OPTION_ACTION': 'option_action',
             'OPTION_TYPE': 'option_type', 'SENTIMENT': 'sentiment',
-            'market_cap_ingested': 'market_cap_ingested', # New
+            'market_cap_ingested': 'market_cap_ingested',
             'price_on_data_date': 'price_on_data_date'
         }
         final_ingest_df = pd.DataFrame()
-        
         for df_col, db_col_name in db_columns_map_updated.items():
             if df_col in ingest_df.columns: final_ingest_df[db_col_name] = ingest_df[df_col]
-            else: final_ingest_df[db_col_name] = np.nan 
+            else: final_ingest_df[db_col_name] = np.nan
         # Type coercions
         if 'data_date' in final_ingest_df.columns: final_ingest_df['data_date'] = pd.to_datetime(final_ingest_df['data_date'], errors='coerce').dt.date
         if 'expiration_date' in final_ingest_df.columns: final_ingest_df['expiration_date'] = pd.to_datetime(final_ingest_df['expiration_date'], errors='coerce').dt.date
@@ -442,12 +448,12 @@ def main_automated_ingestion():
             if col_to_num in final_ingest_df.columns: final_ingest_df[col_to_num] = pd.to_numeric(final_ingest_df[col_to_num], errors='coerce')
 
         if not final_ingest_df.empty:
-            expected_db_cols = list(db_columns_map.values())
+            expected_db_cols = list(db_columns_map_updated.values())
             missing_cols = [col for col in expected_db_cols if col not in final_ingest_df.columns]
             if missing_cols:
                 print(f"ERROR: DataFrame for {target_date_str_for_sheet} missing DB columns: {missing_cols}. Skipping.")
                 continue
-            delete_data_for_date(db_engine, data_date_for_db)
+            delete_data_for_date(db_engine, data_date_str_for_db)
             try:
                 final_ingest_df.to_sql('options_activity', db_engine, if_exists='append', index=False, chunksize=500)
                 print(f"Successfully ingested {len(final_ingest_df)} rows for date {data_date_str_for_db} into PostgreSQL.")
