@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 import yfinance as yf
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 import matplotlib
-
+import time
 
 # --- DATABASE CONNECTION DETAILS ---
 # DB_HOST = "localhost"
@@ -59,19 +60,41 @@ def get_market_cap_st(ticker_symbol):
         market_cap_cache[ticker_symbol_upper] = None
         return None
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300) # Cache for 5 minutes
 def get_current_price(ticker_symbol):
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        price = ticker.fast_info.get('last_price', None)
-        if price:
-            return price
-        tod = ticker.history(period='2d')
-        if not tod.empty:
-            return tod['Close'].iloc[-1]
-    except Exception as e:
-        print(f"Error fetching current price for {ticker_symbol}: {e}")
-    return None
+    print(f"Attempting to fetch current price for {ticker_symbol}...")
+    for attempt in range(2): # Try up to 2 times (initial + 1 retry)
+        try:
+            ticker = yf.Ticker(ticker_symbol)
+            price = ticker.fast_info.get('last_price', None)
+            if price:
+                print(f"Success (attempt {attempt+1}) for {ticker_symbol} price: {price}")
+                return price
+
+            # Fallback if fast_info doesn't work
+            tod = ticker.history(period='2d') # Get last two days
+            if not tod.empty:
+                price = tod['Close'].iloc[-1]
+                print(f"Success (attempt {attempt+1}) for {ticker_symbol} price (fallback): {price}")
+                return price
+
+            # If no price found, and it's the first attempt, prepare for retry
+            if attempt == 0:
+                print(f"Price not found for {ticker_symbol} on attempt 1. Retrying in 60s...")
+                # st.info(f"Failed to fetch price for {ticker_symbol}, retrying in 1 minute...") # Optional UI feedback
+                time.sleep(60) # Wait 1 minute
+            else: # Second attempt also failed
+                print(f"Price not found for {ticker_symbol} after 2 attempts.")
+
+        except Exception as e:
+            print(f"Error fetching current price for {ticker_symbol} (attempt {attempt+1}): {e}")
+            if attempt == 0: # If first attempt fails with an exception
+                print(f"Retrying price fetch for {ticker_symbol} in 60s due to error...")
+                # st.info(f"Error fetching price for {ticker_symbol}, retrying in 1 minute...") # Optional UI
+                time.sleep(60)
+            else: # Second attempt also failed with an exception
+                 print(f"Error fetching current price for {ticker_symbol} after 2 attempts: {e}")
+    return None # Return None if all attempts fail
 
 @st.cache_data(ttl=3600)
 def get_db_date_range():
@@ -123,13 +146,50 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
     # Using sorted unique tickers for consistent order if not explicitly sorted later by a metric
     unique_tickers = sorted(options_df_for_period['underlying_ticker'].unique())
 
-    for ticker in unique_tickers:
+    if len(unique_tickers) > 5: # Show progress if more than 5 tickers
+        progress_bar = st.progress(0)
+        status_text = st.empty() # To show which ticker is being processed
+
+    for i, ticker in enumerate(unique_tickers):
         if not ticker or pd.isna(ticker) or str(ticker).strip().upper() == 'NAN' or not str(ticker).strip():
+            if len(unique_tickers) > 5: progress_bar.progress((i + 1) / len(unique_tickers)) # Still update progress
             continue
 
-        market_cap = get_market_cap_st(ticker)
-        current_price = get_current_price(ticker)
+        if len(unique_tickers) > 5:
+            status_text.text(f"Fetching live data for {ticker} ({i+1}/{len(unique_tickers)})...")
+
+        market_cap_to_use_for_calc = np.nan # Default
+        price_at_period_start_from_db = np.nan # Default
         ticker_df = options_df_for_period[options_df_for_period['underlying_ticker'] == ticker]
+
+        if not ticker_df.empty:
+            # Use market_cap_ingested and price_on_data_date from the most recent record
+            # of this ticker within the selected period from view_data/options_df_for_period
+            latest_record_in_period = ticker_df.sort_values(by='data_date', ascending=False).iloc[0]
+
+            if 'market_cap_ingested' in latest_record_in_period:
+                market_cap_to_use_for_calc = latest_record_in_period['market_cap_ingested']
+
+            # "Price at Period Start" should be based on the actual start of the selected range,
+            # or the earliest activity for that ticker in the range. 
+            # The 'price_on_data_date' from latest_record_in_period is for *that specific options record's date*.
+            # We still need price_at_period_start for consistency if comparing to current price over the whole selected range.
+            # The original logic for price_at_period_start fetching based on selected_range_start_date_dt is probably still best for that specific column.
+            # However, for "% MCap" calculations, using the market_cap_ingested from the DB is key.
+
+            # Fetch historical price for "Price at Period Start" column
+            # (This is kept separate from price_on_data_date which is per record)
+            price_at_period_start_live_fetch = None # Renamed to avoid confusion
+            try:
+                start_hist_date = pd.to_datetime(selected_range_start_date_dt)
+                history = yf.Ticker(ticker).history(start=start_hist_date, end=(start_hist_date + pd.Timedelta(days=4)))
+                if not history.empty:
+                    price_at_period_start_live_fetch = history['Close'].iloc[0]
+            except Exception as e:
+                print(f"Could not fetch hist price for {ticker} on {selected_range_start_date_dt.strftime('%Y-%m-%d')}: {e}")
+
+
+        mcap_val_actual = market_cap_to_use_for_calc if pd.notnull(market_cap_to_use_for_calc) and market_cap_to_use_for_calc > 0 else 0
 
         total_premium_for_ticker, total_call_premium, total_put_premium, bullish_premium, bearish_premium = 0.0, 0.0, 0.0, 0.0, 0.0
         if 'premium_usd' in ticker_df.columns and pd.api.types.is_numeric_dtype(ticker_df['premium_usd']):
@@ -140,13 +200,8 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
             bullish_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['sentiment'] == 'Bullish']['premium_usd'].sum()
             bearish_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['sentiment'] == 'Bearish']['premium_usd'].sum()
         
-        mcap_val_actual = market_cap if market_cap else 0
-        
-        # Calculate Bullish and Bearish "Impact" (Percentage of MCap * 100)
-        # Raw percentage = (premium / mcap_val_actual) * 100
-        # Scaled Impact = Raw percentage * 100
-        bullish_mcap_impact = ((bullish_premium / (mcap_val_actual)/1000) * 100) if mcap_val_actual > 0 else 0
-        bearish_mcap_impact = ((bearish_premium / (mcap_val_actual)/1000) * 100) if mcap_val_actual > 0 else 0
+        bullish_mcap_impact = (bullish_premium / mcap_val_actual)* 100000 if mcap_val_actual > 0 else 0
+        bearish_mcap_impact = (bearish_premium / mcap_val_actual)* 100000 if mcap_val_actual > 0 else 0
         
         price_at_period_start = None
         price_change_pct = np.nan
@@ -163,20 +218,26 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
 
         analysis_results.append({
             "Ticker": ticker, 
-            "Market Cap": market_cap, 
+            "Market Cap (units of $1,000)": market_cap_to_use_for_calc, 
             "Current Price": current_price,
-            "Price at Period Start": price_at_period_start, 
+            "Price at Period Start": price_at_period_start_live_fetch, 
             "Price Change %": price_change_pct,
-            
             "Total Activity Prem": total_premium_for_ticker,
             "Total Call Vol. Prem": total_call_premium,      
-            "Total Put Vol. Prem": total_put_premium,        
-            
+            "Total Put Vol. Prem": total_put_premium,
             "Bullish Prem": bullish_premium, 
             "Bearish Prem": bearish_premium,
-            "Bullish MCap Impact": bullish_mcap_impact, # Scaled value, e.g., 34.9
-            "Bearish MCap Impact": bearish_mcap_impact  # Scaled value
+            "Bullish MCap Score": bullish_mcap_impact, # Scaled value, e.g., 34.9
+            "Bearish MCap Score": bearish_mcap_impact  # Scaled value
         })
+        time.sleep(0.2) # Sleep for 200 milliseconds
+
+        if len(unique_tickers) > 5: # Update progress bar
+            progress_bar.progress((i + 1) / len(unique_tickers))
+    
+    if len(unique_tickers) > 5: # Clear progress items after loop
+        progress_bar.empty()
+        status_text.empty()
     return pd.DataFrame(analysis_results)
 
 def create_expiration_summary_table(options_df_for_period):
@@ -442,7 +503,7 @@ else:
                 for col in currency_cols_float:
                     if col in df_for_display.columns: format_dict[col] = "${:,.2f}"
                 for col in impact_cols: 
-                    if col in df_for_display.columns: format_dict[col] = "{:,.1f}" # e.g., 34.9 (1 decimal place)
+                    if col in df_for_display.columns: format_dict[col] = "{:,.3f}"
                 if 'Price Change %' in df_for_display.columns:
                      format_dict['Price Change %'] = "{:.2f}%" # Still a direct percentage
     
