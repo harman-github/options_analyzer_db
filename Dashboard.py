@@ -144,9 +144,9 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
         
         # Calculate Bullish and Bearish "Impact" (Percentage of MCap * 100)
         # Raw percentage = (premium / mcap_val_actual) * 100
-        # Scaled Impact = Raw percentage * 1000
-        bullish_mcap_impact = ((bullish_premium / mcap_val_actual) * 100) * 100 if mcap_val_actual > 0 else 0
-        bearish_mcap_impact = ((bearish_premium / mcap_val_actual) * 100) * 100 if mcap_val_actual > 0 else 0
+        # Scaled Impact = Raw percentage * 100
+        bullish_mcap_impact = ((bullish_premium / (mcap_val_actual)/1000) * 100) if mcap_val_actual > 0 else 0
+        bearish_mcap_impact = ((bearish_premium / (mcap_val_actual)/1000) * 100) if mcap_val_actual > 0 else 0
         
         price_at_period_start = None
         price_change_pct = np.nan
