@@ -19,6 +19,29 @@ import time
 # db_connection_string = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # --- Helper Functions ---
+def check_password():
+    """Returns `True` if the user entered the correct password."""
+
+    # First, check if we've already authenticated in this session
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Show a password input form.
+    with st.form("password_form"):
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Enter")
+
+        if submitted:
+            # Check the password against the one stored in secrets
+            if password == st.secrets["passwords"]["app_password"]:
+                # If the password is correct, set a session state variable to True
+                # and rerun the script to hide the form and show the app.
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("The password you entered is incorrect.")
+    return False
+    
 market_cap_cache = {}
 @st.cache_data(ttl=3600) # Streamlit caching for an hour
 def get_market_cap_st(ticker_symbol):
