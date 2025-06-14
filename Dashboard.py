@@ -272,6 +272,13 @@ def create_expiration_summary_table(options_df_for_period):
 # --- Streamlit App Layout ---
 st.set_page_config(layout="wide")
 
+if "password_correct" not in st.session_state:
+    st.session_state["password_correct"] = False
+
+# Call the password check function. The app stops here if the password is not correct.
+if not check_password():
+    st.stop() # Stop execution if the password is not correct
+    
 col_title, col_attribution = st.columns([0.1, 0.1]) # Adjust ratios as needed (e.g., 3:1)
 
 with col_attribution:
