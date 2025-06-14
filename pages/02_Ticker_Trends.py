@@ -15,6 +15,20 @@ import plotly.graph_objects as go
 # DB_PASSWORD = "Morpheus321"  # <<< MAKE SURE THIS IS YOUR CORRECT PASSWORD
 # db_connection_string = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+def check_password():
+    if st.session_state.get("password_correct", False):
+        return True
+    with st.form("password_form"):
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Enter")
+        if submitted:
+            if password == st.secrets["passwords"]["app_password"]:
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("The password you entered is incorrect.")
+    return False
+    
 @st.cache_data(ttl=3600)
 def get_all_unique_tickers_from_db():
     """Fetches all unique underlying tickers from the database."""
@@ -89,6 +103,12 @@ def fetch_stock_history(ticker_symbol, start_date, end_date):
 # --- Streamlit Page Layout ---
 st.set_page_config(layout="wide")
 
+if "password_correct" not in st.session_state:
+    st.session_state["password_correct"] = False
+
+if not check_password():
+    st.stop()
+    
 col_title, col_attribution = st.columns([0.1, 0.1]) # Adjust ratios as needed (e.g., 3:1)
 
 with col_attribution:
