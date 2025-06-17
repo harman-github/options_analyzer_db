@@ -2,9 +2,9 @@ name: Daily Options Data Ingestion
 
 on:
   schedule:
-    # Runs at 11:00 UTC every day (adjust as needed, e.g., after market close in your timezone)
+    # Runs at 05:00 UTC every day (1am EST) 
     # Use crontab.guru to help with cron syntax
-    - cron: '0 11 * * *' 
+    - cron: '0 5 * * *' 
   workflow_dispatch: # Allows manual triggering from the Actions tab on GitHub
 
 jobs:
