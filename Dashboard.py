@@ -161,60 +161,57 @@ def fetch_options_activity_for_range(start_date, end_date):
         st.error(f"Error connecting to DB or fetching data for range {start_date_str}-{end_date_str}: {e}")
         return pd.DataFrame()
 
-def analyze_ticker_dashboard(options_df_for_period): # No longer needs selected_range_start_date_dt
-    """
-    Performs per-ticker analysis using market cap and historical price data
-    that was pre-fetched and stored in the database.
-    """
+def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt):
     if options_df_for_period.empty:
         return pd.DataFrame()
 
     analysis_results = []
-    # Using sorted list of unique tickers for consistent order
     unique_tickers = sorted(options_df_for_period['underlying_ticker'].unique())
 
     for ticker in unique_tickers:
         if not ticker or pd.isna(ticker) or str(ticker).strip().upper() == 'NAN' or not str(ticker).strip():
             continue
 
-        # This is now the ONLY live yfinance call needed for the main table per ticker
+        # Fetch LIVE current price for comparison. This function already has retries.
         current_price = get_current_price(ticker) 
-        
-        ticker_df = options_df_for_period[options_df_for_period['underlying_ticker'] == ticker]
 
-        # --- Use Stored Data from Database ---
-        market_cap_to_use_for_calc = np.nan
+        # Filter the DataFrame for the current ticker
+        ticker_df = options_df_for_period[options_df_for_period['underlying_ticker'] == ticker]
+        
+        # --- >> KEY CHANGE: Use Stored Market Cap and Price from the Database << ---
+        market_cap_for_calc = np.nan
         price_at_period_start = np.nan
 
         if not ticker_df.empty:
-            # For calculations, use the data from the MOST RECENT record for this ticker within the selected range
+            # For calculations, use the data from the MOST RECENT record for this ticker in the selected range
+            # This provides a consistent reference point for the period's aggregated premium.
             latest_record_in_period = ticker_df.sort_values(by='data_date', ascending=False).iloc[0]
             
             if 'market_cap_ingested' in latest_record_in_period:
-                market_cap_to_use_for_calc = latest_record_in_period['market_cap_ingested']
+                market_cap_for_calc = latest_record_in_period['market_cap_ingested']
             
             # For "Price at Period Start", use the price from the EARLIEST record in the range for context
             earliest_record_in_period = ticker_df.sort_values(by='data_date', ascending=True).iloc[0]
             if 'price_on_data_date' in earliest_record_in_period:
                  price_at_period_start = earliest_record_in_period['price_on_data_date']
         
-        mcap_val_for_calc = market_cap_to_use_for_calc if pd.notnull(market_cap_to_use_for_calc) and market_cap_to_use_for_calc > 0 else 0
+        # This is the market cap value that all subsequent calculations will use
+        mcap_val_for_calc = market_cap_for_calc if pd.notnull(market_cap_for_calc) and market_cap_for_calc > 0 else 0
         
-        # Premium sum calculations remain the same, using the data from ticker_df
+        # --- Premium Summation (remains the same) ---
         total_premium_for_ticker, total_call_premium, total_put_premium, bullish_premium, bearish_premium = 0.0, 0.0, 0.0, 0.0, 0.0
         if 'premium_usd' in ticker_df.columns:
             ticker_df_cleaned_premium = ticker_df.dropna(subset=['premium_usd'])
             total_premium_for_ticker = ticker_df_cleaned_premium['premium_usd'].sum()
-            # ... (rest of your premium sum logic for calls, puts, bullish, bearish) ...
             if 'sentiment' in ticker_df_cleaned_premium.columns:
-                sentiment_series = ticker_df_cleaned_premium['sentiment'].fillna('UNKNOWN').astype(str).str.strip().str.upper()
+                sentiment_series = ticker_df_cleaned_premium['sentiment'].fillna('UNKNOWN').astype(str).strip().upper()
                 bullish_premium = ticker_df_cleaned_premium.loc[sentiment_series == 'BULLISH', 'premium_usd'].sum()
                 bearish_premium = ticker_df_cleaned_premium.loc[sentiment_series == 'BEARISH', 'premium_usd'].sum()
             if 'option_type' in ticker_df_cleaned_premium.columns:
                 total_call_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['option_type'].str.upper() == 'CALL']['premium_usd'].sum()
                 total_put_premium = ticker_df_cleaned_premium[ticker_df_cleaned_premium['option_type'].str.upper() == 'PUT']['premium_usd'].sum()
 
-        # Calculation logic remains the same, but now uses the stored market cap
+        # --- "Impact Score" Calculations (now use the reliable market cap from DB) ---
         bullish_mcap_impact = (bullish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
         bearish_mcap_impact = (bearish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
         
@@ -224,9 +221,9 @@ def analyze_ticker_dashboard(options_df_for_period): # No longer needs selected_
 
         analysis_results.append({
             "Ticker": ticker, 
-            "Market Cap": market_cap_to_use_for_calc, # Using the ingested Mcap
+            "Market Cap": market_cap_for_calc, # This is now the ingested Mcap
             "Current Price": current_price,
-            "Price at Period Start": price_at_period_start, # Using the ingested historical price
+            "Price at Period Start": price_at_period_start, # This is also from the DB now
             "Price Change %": price_change_pct,
             "Total Activity Prem": total_premium_for_ticker,
             "Total Call Vol. Prem": total_call_premium,      
