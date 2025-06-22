@@ -10,11 +10,11 @@ import numpy as np
 import yfinance as yf
 
 # --- Configuration from Environment Variables (to be set in GitHub Secrets) ---
-DB_HOST = os.environ.get("SUPABASE_DB_HOST")
-DB_PORT = os.environ.get("SUPABASE_DB_PORT", "6543") # Default to Supabase pooler port
-DB_NAME = os.environ.get("SUPABASE_DB_NAME", "postgres")
-DB_USER = os.environ.get("SUPABASE_DB_USER", "postgres")
-DB_PASSWORD = os.environ.get("SUPABASE_DB_PASSWORD")
+DB_HOST = os.environ.get("NEON_DB_HOST")
+DB_PORT = os.environ.get("NEON_DB_PORT", "6543") # Default to NEON pooler port
+DB_NAME = os.environ.get("NEON_DB_NAME", "postgres")
+DB_USER = os.environ.get("NEON_DB_USER", "postgres")
+DB_PASSWORD = os.environ.get("NEON_DB_PASSWORD")
 GSHEET_CREDENTIALS_JSON_STR = os.environ.get("GSHEET_CREDENTIALS_JSON")
 SPREADSHEET_NAME = os.environ.get("GSHEET_SPREADSHEET_NAME", "Unusual Options Flow Database")
 
@@ -214,7 +214,7 @@ def main_automated_ingestion():
             delete_data_for_date(db_engine, date_to_process)
             try:
                 final_ingest_df.to_sql('options_activity', db_engine, if_exists='append', index=False, chunksize=500)
-                print(f"Successfully ingested {len(final_ingest_df)} rows for date {date_to_process} into Supabase.")
+                print(f"Successfully ingested {len(final_ingest_df)} rows for date {date_to_process} into NEON.")
                 processed_count += 1
             except Exception as e:
                 print(f"Error ingesting data for {date_to_process}: {e}")
