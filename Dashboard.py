@@ -164,73 +164,83 @@ def fetch_options_activity_for_range(start_date, end_date):
 def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt):
     """
     Performs per-ticker analysis using data stored in the database.
-    This version includes robust data type checks to prevent TypeErrors.
+    This version includes highly defensive data type checks to prevent TypeErrors.
     """
     if options_df_for_period.empty:
         return pd.DataFrame()
 
-    # --- Pre-computation Data Validation and Cleaning ---
-    # Create a copy to avoid modifying the original DataFrame passed to the function
-    df_to_analyze = options_df_for_period.copy()
-    
-    # Define expected columns and their desired numeric types
-    numeric_cols = ['premium_usd', 'market_cap_ingested', 'price_on_data_date']
-    # Define columns that should be strings for reliable string operations
-    string_cols = ['underlying_ticker', 'option_type', 'sentiment']
-    
-    # Ensure all required columns exist, fill with appropriate NA values if not
-    for col in numeric_cols + string_cols:
-        if col not in df_to_analyze.columns:
-            df_to_analyze[col] = np.nan if col in numeric_cols else pd.NA
-
-    # Explicitly convert columns to their expected types, coercing errors
-    for col in numeric_cols:
-        df_to_analyze[col] = pd.to_numeric(df_to_analyze[col], errors='coerce')
-    for col in string_cols:
-        df_to_analyze[col] = df_to_analyze[col].astype(str)
-
-    # --- Main Analysis Loop ---
     analysis_results = []
-    unique_tickers = sorted(df_to_analyze['underlying_ticker'].dropna().unique())
+    # Ensure the unique tickers list is clean of any potential non-string data
+    unique_tickers = sorted([str(t) for t in options_df_for_period['underlying_ticker'].dropna().unique()])
 
     for ticker in unique_tickers:
         if not ticker or ticker.upper() == '<NA>':
             continue
 
-        current_price = get_current_price(ticker) # Live fetch
-        ticker_df = df_to_analyze[df_to_analyze['underlying_ticker'] == ticker]
+        # Isolate data for the current ticker
+        ticker_df = options_df_for_period[options_df_for_period['underlying_ticker'] == ticker].copy()
 
-        # Use stored data from the database
-        market_cap_to_use_for_calc = np.nan
+        # --- Defensive Data Type Conversion ---
+        # Explicitly convert all columns we will use to their expected types for THIS ticker's data
+        # If conversion fails for a value, it will become NaN (for numeric) or a default string.
+        
+        # Numeric columns
+        for col in ['premium_usd', 'market_cap_ingested', 'price_on_data_date']:
+            if col in ticker_df.columns:
+                ticker_df[col] = pd.to_numeric(ticker_df[col], errors='coerce')
+            else: # Ensure column exists to prevent KeyErrors later
+                ticker_df[col] = np.nan
+
+        # String columns
+        for col in ['option_type', 'sentiment']:
+            if col in ticker_df.columns:
+                ticker_df[col] = ticker_df[col].astype(str).fillna('UNKNOWN')
+            else:
+                ticker_df[col] = 'UNKNOWN'
+        # --- End of Defensive Conversions ---
+
+        # Fetch live current price for comparison
+        current_price = get_current_price(ticker) 
+
+        # Use Stored Market Cap and Price from the database
+        market_cap_for_calc = np.nan
         price_at_period_start = np.nan
         
         if not ticker_df.empty:
-            latest_record_in_period = ticker_df.sort_values(by='data_date', ascending=False).iloc[0]
-            market_cap_to_use_for_calc = latest_record_in_period['market_cap_ingested']
+            # Use data from the most recent record for this ticker within the selected period
+            latest_record = ticker_df.sort_values(by='data_date', ascending=False).iloc[0]
+            market_cap_for_calc = latest_record['market_cap_ingested']
             
-            earliest_record_in_period = ticker_df.sort_values(by='data_date', ascending=True).iloc[0]
-            price_at_period_start = earliest_record_in_period['price_on_data_date']
+            # Use data from the earliest record for "Price at Period Start"
+            earliest_record = ticker_df.sort_values(by='data_date', ascending=True).iloc[0]
+            price_at_period_start = earliest_record['price_on_data_date']
         
-        mcap_val_for_calc = market_cap_to_use_for_calc if pd.notnull(market_cap_to_use_for_calc) and market_cap_to_use_for_calc > 0 else 0
+        mcap_val_for_calc = market_cap_for_calc if pd.notnull(market_cap_for_calc) and market_cap_for_calc > 0 else 0
         
-        # Premium sum calculations
-        bullish_premium = ticker_df.loc[ticker_df['sentiment'].str.upper() == 'BULLISH', 'premium_usd'].sum()
-        bearish_premium = ticker_df.loc[ticker_df['sentiment'].str.upper() == 'BEARISH', 'premium_usd'].sum()
-        total_call_premium = ticker_df.loc[ticker_df['option_type'].str.upper() == 'CALL', 'premium_usd'].sum()
-        total_put_premium = ticker_df.loc[ticker_df['option_type'].str.upper() == 'PUT', 'premium_usd'].sum()
-        total_premium_for_ticker = ticker_df['premium_usd'].sum()
-
+        # --- Premium Summation (now operating on cleaned types) ---
+        ticker_df_cleaned_premium = ticker_df.dropna(subset=['premium_usd'])
+        
+        bullish_premium = ticker_df_cleaned_premium.loc[ticker_df_cleaned_premium['sentiment'].str.upper() == 'BULLISH', 'premium_usd'].sum()
+        bearish_premium = ticker_df_cleaned_premium.loc[ticker_df_cleaned_premium['sentiment'].str.upper() == 'BEARISH', 'premium_usd'].sum()
+        total_call_premium = ticker_df_cleaned_premium.loc[ticker_df_cleaned_premium['option_type'].str.upper() == 'CALL', 'premium_usd'].sum()
+        total_put_premium = ticker_df_cleaned_premium.loc[ticker_df_cleaned_premium['option_type'].str.upper() == 'PUT', 'premium_usd'].sum()
+        total_premium_for_ticker = ticker_df_cleaned_premium['premium_usd'].sum()
+        
         # "Impact Score" calculations
         bullish_mcap_impact = (bullish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
         bearish_mcap_impact = (bearish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
         
         price_change_pct = np.nan
+        # Ensure prices are numeric before attempting calculation
         if pd.notnull(current_price) and pd.notnull(price_at_period_start) and price_at_period_start != 0:
-            price_change_pct = ((current_price - price_at_period_start) / price_at_period_start) * 100
+            try:
+                price_change_pct = ((float(current_price) - float(price_at_period_start)) / float(price_at_period_start)) * 100
+            except (ValueError, TypeError):
+                price_change_pct = np.nan # Handle cases where conversion to float fails
 
         analysis_results.append({
             "Ticker": ticker, 
-            "Market Cap": market_cap_to_use_for_calc,
+            "Market Cap": market_cap_for_calc,
             "Current Price": current_price,
             "Price at Period Start": price_at_period_start,
             "Price Change %": price_change_pct,
@@ -243,9 +253,8 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
             "Bearish MCap Impact": bearish_mcap_impact
         })
         
-        # The time.sleep() for yfinance calls is now inside get_current_price()
-        # but adding a small one here can help pace the overall loop if needed.
-        # time.sleep(0.1) 
+        # The sleep call for yfinance is already inside get_current_price() with its retry logic
+        # time.sleep(0.2) # This can be un-commented if you still see rate-limiting on current price fetches
 
     return pd.DataFrame(analysis_results)
 
