@@ -26,7 +26,7 @@ jobs:
         env:
           GSHEET_CREDENTIALS_JSON: ${{ secrets.GSHEET_CREDENTIALS_JSON }}
           NEON_DB_HOST: ${{ secrets.NEON_DB_HOST }}
-          # NEON_DB_PORT: ${{ secrets.NEON_DB_PORT }}
+          NEON_DB_PORT: ${{ secrets.NEON_DB_PORT }}
           NEON_DB_NAME: ${{ secrets.NEON_DB_NAME }}
           NEON_DB_USER: ${{ secrets.NEON_DB_USER }}
           NEON_DB_PASSWORD: ${{ secrets.NEON_DB_PASSWORD }}
