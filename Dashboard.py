@@ -164,54 +164,63 @@ def fetch_options_activity_for_range(start_date, end_date):
 def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt):
     """
     Performs per-ticker analysis using data stored in the database.
-    This version includes robust type handling for sentiment and option_type columns.
+    This version includes robust data type checks to prevent TypeErrors.
     """
     if options_df_for_period.empty:
         return pd.DataFrame()
 
+    # --- Pre-computation Data Validation and Cleaning ---
+    # Create a copy to avoid modifying the original DataFrame passed to the function
+    df_to_analyze = options_df_for_period.copy()
+    
+    # Define expected columns and their desired numeric types
+    numeric_cols = ['premium_usd', 'market_cap_ingested', 'price_on_data_date']
+    # Define columns that should be strings for reliable string operations
+    string_cols = ['underlying_ticker', 'option_type', 'sentiment']
+    
+    # Ensure all required columns exist, fill with appropriate NA values if not
+    for col in numeric_cols + string_cols:
+        if col not in df_to_analyze.columns:
+            df_to_analyze[col] = np.nan if col in numeric_cols else pd.NA
+
+    # Explicitly convert columns to their expected types, coercing errors
+    for col in numeric_cols:
+        df_to_analyze[col] = pd.to_numeric(df_to_analyze[col], errors='coerce')
+    for col in string_cols:
+        df_to_analyze[col] = df_to_analyze[col].astype(str)
+
+    # --- Main Analysis Loop ---
     analysis_results = []
-    unique_tickers = sorted(options_df_for_period['underlying_ticker'].unique())
+    unique_tickers = sorted(df_to_analyze['underlying_ticker'].dropna().unique())
 
     for ticker in unique_tickers:
-        if not ticker or pd.isna(ticker) or str(ticker).strip().upper() == 'NAN' or not str(ticker).strip():
+        if not ticker or ticker.upper() == '<NA>':
             continue
 
-        current_price = get_current_price(ticker) 
-        ticker_df = options_df_for_period[options_df_for_period['underlying_ticker'] == ticker]
-        
+        current_price = get_current_price(ticker) # Live fetch
+        ticker_df = df_to_analyze[df_to_analyze['underlying_ticker'] == ticker]
+
+        # Use stored data from the database
         market_cap_to_use_for_calc = np.nan
         price_at_period_start = np.nan
-
+        
         if not ticker_df.empty:
             latest_record_in_period = ticker_df.sort_values(by='data_date', ascending=False).iloc[0]
-            if 'market_cap_ingested' in latest_record_in_period:
-                market_cap_to_use_for_calc = latest_record_in_period['market_cap_ingested']
+            market_cap_to_use_for_calc = latest_record_in_period['market_cap_ingested']
             
             earliest_record_in_period = ticker_df.sort_values(by='data_date', ascending=True).iloc[0]
-            if 'price_on_data_date' in earliest_record_in_period:
-                 price_at_period_start = earliest_record_in_period['price_on_data_date']
+            price_at_period_start = earliest_record_in_period['price_on_data_date']
         
         mcap_val_for_calc = market_cap_to_use_for_calc if pd.notnull(market_cap_to_use_for_calc) and market_cap_to_use_for_calc > 0 else 0
         
-        total_premium_for_ticker, total_call_premium, total_put_premium, bullish_premium, bearish_premium = 0.0, 0.0, 0.0, 0.0, 0.0
-        if 'premium_usd' in ticker_df.columns and pd.api.types.is_numeric_dtype(ticker_df['premium_usd']):
-            ticker_df_cleaned_premium = ticker_df.dropna(subset=['premium_usd'])
-            total_premium_for_ticker = ticker_df_cleaned_premium['premium_usd'].sum()
-            
-            if 'sentiment' in ticker_df_cleaned_premium.columns:
-                # Robustly handle sentiment column: fill missing, convert to string, then uppercase
-                sentiment_series = ticker_df_cleaned_premium['sentiment'].fillna('UNKNOWN').astype(str).str.strip().str.upper()
-                bullish_premium = ticker_df_cleaned_premium.loc[sentiment_series == 'BULLISH', 'premium_usd'].sum()
-                bearish_premium = ticker_df_cleaned_premium.loc[sentiment_series == 'BEARISH', 'premium_usd'].sum()
+        # Premium sum calculations
+        bullish_premium = ticker_df.loc[ticker_df['sentiment'].str.upper() == 'BULLISH', 'premium_usd'].sum()
+        bearish_premium = ticker_df.loc[ticker_df['sentiment'].str.upper() == 'BEARISH', 'premium_usd'].sum()
+        total_call_premium = ticker_df.loc[ticker_df['option_type'].str.upper() == 'CALL', 'premium_usd'].sum()
+        total_put_premium = ticker_df.loc[ticker_df['option_type'].str.upper() == 'PUT', 'premium_usd'].sum()
+        total_premium_for_ticker = ticker_df['premium_usd'].sum()
 
-            # --- >>> KEY FIX IS HERE <<< ---
-            if 'option_type' in ticker_df_cleaned_premium.columns:
-                # Robustly handle option_type column just like the sentiment column
-                option_type_series = ticker_df_cleaned_premium['option_type'].fillna('UNKNOWN').astype(str).str.strip().str.upper()
-                total_call_premium = ticker_df_cleaned_premium.loc[option_type_series == 'CALL', 'premium_usd'].sum()
-                total_put_premium = ticker_df_cleaned_premium.loc[option_type_series == 'PUT', 'premium_usd'].sum()
-
-        # Calculation logic remains the same
+        # "Impact Score" calculations
         bullish_mcap_impact = (bullish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
         bearish_mcap_impact = (bearish_premium / mcap_val_for_calc) * 100000 if mcap_val_for_calc > 0 else 0
         
@@ -219,7 +228,6 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
         if pd.notnull(current_price) and pd.notnull(price_at_period_start) and price_at_period_start != 0:
             price_change_pct = ((current_price - price_at_period_start) / price_at_period_start) * 100
 
-        # Appending results dictionary remains the same
         analysis_results.append({
             "Ticker": ticker, 
             "Market Cap": market_cap_to_use_for_calc,
@@ -234,6 +242,11 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
             "Bullish MCap Impact": bullish_mcap_impact,
             "Bearish MCap Impact": bearish_mcap_impact
         })
+        
+        # The time.sleep() for yfinance calls is now inside get_current_price()
+        # but adding a small one here can help pace the overall loop if needed.
+        # time.sleep(0.1) 
+
     return pd.DataFrame(analysis_results)
 
 def create_expiration_summary_table(options_df_for_period):
