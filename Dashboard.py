@@ -220,7 +220,15 @@ def analyze_ticker_dashboard(options_df_for_period, selected_range_start_date_dt
             price_change_pct = np.nan
             if pd.notnull(current_price) and pd.notnull(price_at_period_start) and price_at_period_start != 0:
                 price_change_pct = ((float(current_price) - float(price_at_period_start)) / float(price_at_period_start)) * 100
-
+                
+            print(f"\n--- DEBUG FOR TICKER: {ticker} ---")
+            print(f"  Raw Ingested Market Cap (from DB): {market_cap_to_use_for_calc}")
+            print(f"  Market Cap Value Used for Calc: {mcap_val_for_calc}")
+            print(f"  Bullish Premium ($): {bullish_premium}")
+            print(f"  Bearish Premium ($): {bearish_premium}")
+            print(f"  >>> Calculated Bullish MCap Impact: {bullish_mcap_impact}")
+            print(f"  >>> Calculated Bearish MCap Impact: {bearish_mcap_impact}")
+            
             analysis_results.append({
                 "Ticker": ticker, 
                 "Market Cap": market_cap_to_use_for_calc,
