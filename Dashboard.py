@@ -467,7 +467,7 @@ else:
         else:
             with st.spinner(f"Analyzing data... Fetching market info..."):
                 # The function call is now simpler:
-                ticker_analysis_df = analyze_ticker_dashboard(view_data)  
+                ticker_analysis_df = analyze_ticker_dashboard(view_data, selected_start_date) 
             
             if not ticker_analysis_df.empty:
                 # 1. Define the new desired column order
