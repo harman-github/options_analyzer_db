@@ -607,10 +607,5 @@ else:
         else:
             st.info("No expiration summary to display based on current filters.")
 
-    # --- Raw Data Display ---
-    raw_data_title = f"Raw Options Data{f' for {searched_ticker}' if searched_ticker else ' (Selected Period)'}"
-    with st.expander(raw_data_title, expanded=False): # Collapsed by default
-        st.dataframe(view_data, use_container_width=True)
-
 st.sidebar.markdown("---")
 st.sidebar.markdown("Provisional Dashboard - Data from `yfinance` is subject to its terms and can have delays.")
