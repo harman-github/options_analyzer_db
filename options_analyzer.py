@@ -145,76 +145,132 @@ def delete_data_for_date(engine, target_date_str):
         else: raise e
 
 def main_automated_ingestion():
+    global db_engine
+    print(f"options_analyzer.py script started at {datetime.now(timezone.utc)}")
+    print("Starting automated data ingestion...")
+
+    # --- Configuration and Connection Setup ---
     if not all([DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, GSHEET_CREDENTIALS_JSON_STR, SPREADSHEET_NAME]):
         print("ERROR: Critical environment variables are missing. Exiting.")
         return
 
-    db_engine = create_engine(f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
-    create_supporting_tables(db_engine)
+    try:
+        db_engine_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        db_engine = create_engine(db_engine_url)
+        create_supporting_tables(db_engine)
+    except Exception as e:
+        print(f"Failed to create SQLAlchemy engine or initial tables: {e}")
+        return
 
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    gsheet_creds_dict = json.loads(GSHEET_CREDENTIALS_JSON_STR)
-    gspread_credentials = Credentials.from_service_account_info(gsheet_creds_dict, scopes=scopes)
-    gc = gspread.authorize(gspread_credentials)
-    spreadsheet = gc.open(SPREADSHEET_NAME)
+    try:
+        gsheet_creds_dict_parsed = json.loads(GSHEET_CREDENTIALS_JSON_STR)
+        scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        gspread_credentials = Credentials.from_service_account_info(gsheet_creds_dict_parsed, scopes=scopes)
+        gc = gspread.authorize(gspread_credentials)
+        spreadsheet = gc.open(SPREADSHEET_NAME)
+        print("Google Sheets API authorized and spreadsheet opened successfully.")
+    except Exception as e:
+        print(f"Failed to authorize Google Sheets API or open spreadsheet: {e}")
+        return
 
-    worksheets = spreadsheet.worksheets()
-    dates_to_process = sorted([ws.title for ws in worksheets if is_valid_date_format(ws.title)], reverse=True)
+    # --- Data Processing Logic ---
+    try:
+        worksheets = spreadsheet.worksheets()
+        all_gsheet_tabs = [ws.title for ws in worksheets if is_valid_date_format(ws.title)]
+        if not all_gsheet_tabs:
+            print("No valid date-formatted worksheet tabs found in Google Sheet.")
+            return
+        
+        print(f"Found {len(all_gsheet_tabs)} potential date tabs in Google Sheet.")
+        # Logic to decide which tabs to process (e.g., all, or only new ones)
+        # For a robust "catch-up and update" a full sync is good.
+        dates_to_process = sorted(all_gsheet_tabs, reverse=True)
+    except Exception as e:
+        print(f"Error fetching worksheet list: {e}")
+        return
     
-    print(f"Found {len(dates_to_process)} date-formatted tabs in Google Sheet to process.")
-    
-    run_market_data_cache = {}
     processed_count = 0
+    run_market_data_cache = {}
 
     for date_to_process in dates_to_process:
         print(f"\n--- Processing sheet tab: {date_to_process} ---")
         options_df = get_data_from_worksheet_automated(spreadsheet, date_to_process)
-        if options_df.empty: print(f"No data parsed from sheet '{date_to_process}'. Skipping."); continue
+        if options_df.empty:
+            print(f"No data parsed from sheet '{date_to_process}'. Skipping.")
+            continue
 
         ingest_df = options_df.copy()
-        ingest_df['data_date'] = pd.to_datetime(date_to_process).date()
+        date_obj = pd.to_datetime(date_to_process).date()
         
-        # Add columns for market data
+        # --- Fetch Market Data ---
         ingest_df['market_cap_ingested'] = np.nan
         ingest_df['price_on_data_date'] = np.nan
-        
-        unique_tickers = ingest_df['UNDERLYING_TICKER'].dropna().unique()
-        for ticker in unique_tickers:
+        unique_tickers_in_sheet = ingest_df['UNDERLYING_TICKER'].dropna().unique()
+
+        for ticker in unique_tickers_in_sheet:
             if ticker in run_market_data_cache:
-                mcap = run_market_data_cache[ticker]['mcap']
-                price = run_market_data_cache[ticker]['price']
+                market_data = run_market_data_cache[ticker]
             else:
                 print(f"  Fetching yfinance data for {ticker}...")
                 try:
                     ticker_obj = yf.Ticker(ticker)
                     mcap = ticker_obj.info.get('marketCap')
-                    hist = ticker_obj.history(start=date_to_process, end=(pd.to_datetime(date_to_process) + timedelta(days=1)).strftime('%Y-%m-%d'))
+                    hist = ticker_obj.history(start=date_obj, end=(date_obj + timedelta(days=1)))
                     price = hist['Close'].iloc[0] if not hist.empty else None
-                    run_market_data_cache[ticker] = {'mcap': mcap, 'price': price}
-                    print(f"  -> {ticker}: Mcap={mcap}, Price={price}")
+                    market_data = {'mcap': mcap, 'price': price}
                     time.sleep(2) # Throttle calls
                 except Exception as e:
                     print(f"  -> Error fetching yfinance data for {ticker}: {e}")
-                    run_market_data_cache[ticker] = {'mcap': None, 'price': None}
+                    market_data = {'mcap': None, 'price': None}
+                run_market_data_cache[ticker] = market_data
             
-            ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker, 'market_cap_ingested'] = mcap
-            ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker, 'price_on_data_date'] = price
-        
-        # Prepare for DB
-        ingest_df['premium_usd'] = ingest_df['PREMIUM_USD'].apply(parse_human_readable_number)
-        ingest_df['expiration_date'] = pd.to_datetime(ingest_df['EXPIRATION_DATE'], format='%m/%d/%y', errors='coerce').dt.date
-        ingest_df['strike_price'] = pd.to_numeric(ingest_df['strike_price'], errors='coerce')
+            ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker, 'market_cap_ingested'] = market_data['mcap']
+            ingest_df.loc[ingest_df['UNDERLYING_TICKER'] == ticker, 'price_on_data_date'] = market_data['price']
 
-        db_columns = ['data_date', 'underlying_ticker', 'strike_price', 'expiration_date', 'premium_usd', 'option_action', 'option_type', 'sentiment', 'market_cap_ingested', 'price_on_data_date']
-        ingest_df.rename(columns={'UNDERLYING_TICKER': 'underlying_ticker', 'STRIKE_PRICE': 'strike_price', 'EXPIRATION_DATE': 'expiration_date', 'PREMIUM_USD': 'premium_usd', 'OPTION_ACTION': 'option_action', 'OPTION_TYPE': 'option_type', 'SENTIMENT': 'sentiment'}, inplace=True, errors='ignore')
-        final_ingest_df = ingest_df[db_columns].copy()
+        # --- Prepare DataFrame for Database ---
+        # 1. First, parse any string values that are needed for mapping
+        ingest_df['premium_usd_numeric'] = ingest_df['PREMIUM_USD'].apply(parse_human_readable_number)
+
+        # 2. Define the map from source columns (in ingest_df) to target DB columns
+        db_columns_map = {
+            'data_date': 'data_date', # This column will be added next
+            'UNDERLYING_TICKER': 'underlying_ticker',
+            'STRIKE_PRICE': 'strike_price',
+            'EXPIRATION_DATE': 'expiration_date',
+            'premium_usd_numeric': 'premium_usd',
+            'OPTION_ACTION': 'option_action',
+            'OPTION_TYPE': 'option_type',
+            'SENTIMENT': 'sentiment',
+            'market_cap_ingested': 'market_cap_ingested',
+            'price_on_data_date': 'price_on_data_date'
+        }
+        
+        # 3. Create the final DataFrame with the correct column names (lowercase)
+        final_ingest_df = pd.DataFrame()
+        final_ingest_df['data_date'] = pd.to_datetime(date_to_process).date() # Add data_date
+        for source_col, target_col in db_columns_map.items():
+            if source_col != 'data_date': # data_date is already added
+                if source_col in ingest_df.columns:
+                    final_ingest_df[target_col] = ingest_df[source_col]
+                else:
+                    final_ingest_df[target_col] = np.nan # Add as NaN if a source column is missing
+
+        # 4. NOW, perform final type conversions on the final DataFrame with correct column names
+        if 'strike_price' in final_ingest_df.columns:
+            final_ingest_df['strike_price'] = pd.to_numeric(final_ingest_df['strike_price'], errors='coerce')
+        if 'premium_usd' in final_ingest_df.columns:
+            final_ingest_df['premium_usd'] = pd.to_numeric(final_ingest_df['premium_usd'], errors='coerce')
+        if 'expiration_date' in final_ingest_df.columns:
+            final_ingest_df['expiration_date'] = pd.to_datetime(final_ingest_df['expiration_date'], format='%m/%d/%y', errors='coerce').dt.date
+        
         final_ingest_df.dropna(subset=['data_date', 'underlying_ticker'], inplace=True)
         
+        # --- Ingest into Database ---
         if not final_ingest_df.empty:
             delete_data_for_date(db_engine, date_to_process)
             try:
                 final_ingest_df.to_sql('options_activity', db_engine, if_exists='append', index=False, chunksize=500)
-                print(f"Successfully ingested {len(final_ingest_df)} rows for date {date_to_process} into NEON.")
+                print(f"Successfully ingested {len(final_ingest_df)} rows for date {date_to_process} into Supabase.")
                 processed_count += 1
             except Exception as e:
                 print(f"Error ingesting data for {date_to_process}: {e}")
