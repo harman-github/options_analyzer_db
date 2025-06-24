@@ -163,16 +163,35 @@ def main_automated_ingestion():
     except Exception as e:
         print(f"FATAL: Could not authorize/open Google Sheets: {e}"); return
         
-    all_gsheet_tabs = [ws.title for ws in spreadsheet.worksheets() if is_valid_date_format(ws.title)]
-    print(f"Found {len(all_gsheet_tabs)} date-formatted tabs in Google Sheet to process.")
-    if not all_gsheet_tabs: return
+    try:
+        worksheets = spreadsheet.worksheets()
+        all_gsheet_tabs = [ws.title for ws in worksheets if is_valid_date_format(ws.title)]
+        
+        if not all_gsheet_tabs:
+            print("No valid date-formatted worksheet tabs found in Google Sheet.")
+            return
+
+        sorted_dates = sorted(all_gsheet_tabs, reverse=True)
+        dates_to_process = sorted_dates[:5] 
+        
+        print(f"Found {len(all_gsheet_tabs)} total date tabs. Will process the 5 most recent: {dates_to_process}")
+
+    except Exception as e:
+        print(f"Error fetching worksheet list from Google Sheets: {e}")
+        return
+    
+    if not dates_to_process:
+        print("No dates were identified for processing.")
+        return # Exit if the list is empty after slicing
 
     run_market_data_cache = {}
     processed_count = 0
-    for date_to_process in sorted(all_gsheet_tabs, reverse=True):
+    for date_to_process in dates_to_process:
         print(f"\n--- Processing sheet tab: {date_to_process} ---")
         options_df = get_data_from_worksheet_automated(spreadsheet, date_to_process)
-        if options_df.empty: print(f"No data parsed from sheet '{date_to_process}'."); continue
+        if options_df.empty:
+            print(f"No data parsed from sheet '{date_to_process}'. Skipping.")
+            continue
         
         # Add new columns before renaming, using original uppercase names
         options_df['data_date'] = pd.to_datetime(date_to_process).date()
