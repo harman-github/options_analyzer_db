@@ -245,6 +245,20 @@ def main_automated_ingestion():
         final_ingest_df.dropna(subset=['data_date', 'underlying_ticker'], inplace=True)
         
         if not final_ingest_df.empty:
+            unique_constraint_columns = [
+                'data_date', 'underlying_ticker', 'strike_price', 'expiration_date',
+                'option_action', 'option_type', 'sentiment', 'premium_usd'
+            ]
+            
+            # Keep only the columns that actually exist in the DataFrame to avoid errors
+            subset_columns = [col for col in unique_constraint_columns if col in final_ingest_df.columns]
+
+            rows_before_dedupe = len(final_ingest_df)
+            final_ingest_df.drop_duplicates(subset=subset_columns, keep='first', inplace=True)
+            rows_after_dedupe = len(final_ingest_df)
+
+            if rows_before_dedupe > rows_after_dedupe:
+                print(f"Removed {rows_before_dedupe - rows_after_dedupe} duplicate rows from the dataset.")
             delete_data_for_date(db_engine, date_to_process)
             try:
                 final_ingest_df.to_sql('options_activity', db_engine, if_exists='append', index=False, chunksize=500)
@@ -259,3 +273,4 @@ def main_automated_ingestion():
 
 if __name__ == '__main__':
     main_automated_ingestion()
+
