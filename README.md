@@ -1,4 +1,4 @@
-# 📉 Unusual Options Flow Analyzer
+# 📈 Unusual Options Flow Analyzer
 
 A Python-based tool designed to analyze daily "unusual options flow" data. While this repository contains the source code which you are free to fork and explore, the primary way to access this dashboard is through our live web application.
 
